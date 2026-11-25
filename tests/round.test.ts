@@ -45,4 +45,25 @@ describe('round state machine', () => {
     expect(round.phase).toBe('over');
     expect(round.endReason).toBe('missed');
   });
+
+  it('reaches Cloud Nine at floor 48 and keeps accepting drops afterwards', () => {
+    let round = updateRound(pressRound(createRound(7)), COUNTDOWN_SECONDS);
+    round = {
+      ...round,
+      floors: 47,
+      movingBlock: { x: 20, width: 60, direction: 1 },
+    };
+    round = pressRound(round);
+    expect(round.floors).toBe(48);
+    expect(round.reachedCloudNine).toBe(true);
+    expect(getRoundSnapshot(round).layer).toBe(9);
+
+    round = {
+      ...round,
+      movingBlock: { x: round.blocks.at(-1)!.x, width: round.blocks.at(-1)!.width, direction: 1 },
+    };
+    round = pressRound(round);
+    expect(round.floors).toBe(49);
+    expect(round.phase).toBe('playing');
+  });
 });

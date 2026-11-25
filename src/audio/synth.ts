@@ -109,6 +109,15 @@ export class SynthAudio {
     });
   }
 
+  cloudNine(): void {
+    [523, 659, 784, 1047, 1319].forEach((frequency, index) => {
+      this.tone(frequency, 0.58, 'sine', 0.2, index * 0.13);
+    });
+    [392, 523, 659].forEach((frequency, index) => {
+      this.tone(frequency, 0.72, 'triangle', 0.12, 0.18 + index * 0.12);
+    });
+  }
+
   update(dt: number, layer: number, musicEnabled: boolean): void {
     if (!musicEnabled || this.muted || !this.context) return;
     this.musicElapsed += dt;

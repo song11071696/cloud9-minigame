@@ -4,6 +4,7 @@ import { Leaderboard, sanitizeEventKey, type LeaderboardEntry, type StorageLike 
 import { getDuelOutcome, type DuelWinner } from './core/duel';
 import { shouldReturnToAttract } from './core/kiosk';
 import { nextRandom } from './core/rng';
+import { getScreenLockoutProgress, isScreenInputLocked } from './core/screen-lockout';
 import {
   createRound,
   getRoundSnapshot,
@@ -104,6 +105,7 @@ let kioskIdleSeconds = 0;
 let inputActivity = false;
 let wakeLock: { release: () => Promise<void> } | null = null;
 let kioskGestureStarted = false;
+let cloudNineAge = -1;
 
 function getEntries(): LeaderboardEntry[] {
   return board.get(eventKey);
@@ -128,6 +130,7 @@ function beginRound(): void {
   perfectText = '';
   perfectAge = -1;
   layerFlash = 0;
+  cloudNineAge = -1;
   debris = [];
   candidateEntry = null;
   highlightedEntry = null;
@@ -137,11 +140,6 @@ function beginRound(): void {
 
 function enterResults(): void {
   screenElapsed = 0;
-  if (duelSession) {
-    duelSession = false;
-    screen = 'attract';
-    return;
-  }
   if (candidateEntry) {
     initials = createInitialsState();
     screen = 'initials';
@@ -149,6 +147,14 @@ function enterResults(): void {
   } else {
     screen = 'leaderboard';
   }
+}
+
+function returnToAttract(): void {
+  screen = 'attract';
+  screenElapsed = 0;
+  duelSession = false;
+  duelWinner = null;
+  candidateEntry = null;
 }
 
 function saveInitials(): void {
@@ -295,6 +301,10 @@ function dropForPlayer(player: 0 | 1): void {
   } else {
     perfectAge = -1;
   }
+  if (!activeRound.reachedCloudNine && updated.reachedCloudNine) {
+    cloudNineAge = 0;
+    audio.cloudNine();
+  }
   if (updated.layerBreaks > activeRound.layerBreaks && !reducedMotion) {
     layerFlash = 0.8;
     audio.layerBreak(getRoundSnapshot(updated).layer);
@@ -320,19 +330,17 @@ function onInput(event: PressEvent): void {
     return;
   }
   if (screen === 'game-over') {
+    if (isScreenInputLocked(screenElapsed)) return;
     if (duelSession) {
-      duelSession = false;
-      screen = 'attract';
-      screenElapsed = 0;
+      returnToAttract();
       return;
     }
     enterResults();
     return;
   }
   if (screen === 'leaderboard') {
-    if (event.player !== 0) return;
-    screen = 'attract';
-    screenElapsed = 0;
+    if (event.player !== 0 || isScreenInputLocked(screenElapsed)) return;
+    returnToAttract();
     return;
   }
   if (screen === 'initials' && event.player === 0 && event.source !== 'keyboard') {
@@ -485,14 +493,20 @@ function update(dt: number): void {
   elapsed += dt;
   screenElapsed += dt;
   perfectAge = perfectAge < 0 ? perfectAge : perfectAge + dt;
+  if (cloudNineAge >= 0) {
+    cloudNineAge += dt;
+    if (cloudNineAge >= 3.5) {
+      cloudNineAge = -1;
+    }
+  }
   layerFlash = Math.max(0, layerFlash - dt);
   debris = debris.map((piece) => ({ ...piece, age: piece.age + dt })).filter((piece) => piece.age < 1.4);
   if (screen === 'attract') updateDemo(dt);
   updateRoundState(dt);
-  if (screen === 'game-over' && screenElapsed >= 8) enterResults();
+  if (screen === 'game-over' && duelSession && screenElapsed >= 6) returnToAttract();
+  else if (screen === 'game-over' && screenElapsed >= 8) enterResults();
   if (screen === 'leaderboard' && screenElapsed >= 10) {
-    screen = 'attract';
-    screenElapsed = 0;
+    returnToAttract();
   }
   if (kioskMode) {
     if (inputActivity) kioskIdleSeconds = 0;
@@ -551,9 +565,32 @@ function render(dt: number): void {
     duelRounds: duelSession ? [getRoundSnapshot(round), getRoundSnapshot(duelRound)] : null,
     duelOut: [round.endReason === 'missed', duelRound.endReason === 'missed'],
     duelWinner,
+    lockoutProgress: screen === 'game-over' || screen === 'leaderboard'
+      ? getScreenLockoutProgress(screenElapsed)
+      : 1,
+    cloudNineAge,
     operator: { open: operatorOpen, confirmClear: operatorConfirmClear, selected: operatorSelected, version: packageInfo.version },
   };
   renderer.render(scene, dt);
+}
+
+if (params.get('test') === '1') {
+  Object.defineProperty(window, '__skyline', {
+    configurable: false,
+    enumerable: true,
+    get: () => {
+      const state = screen === 'attract' ? demoRound : round;
+      const snapshot = getRoundSnapshot(state);
+      return Object.freeze({
+        screen,
+        floors: snapshot.floors,
+        score: snapshot.score,
+        layer: snapshot.layer,
+        timeRemaining: snapshot.timeRemaining,
+        duel: duelSession || duelEnabled,
+      });
+    },
+  });
 }
 
 let lastFrame = 0;

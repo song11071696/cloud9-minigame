@@ -2,9 +2,9 @@ import { nextRandom } from './rng';
 import type { Block } from './stack';
 
 export const DEFAULT_IDLE_SECONDS = 20;
-export const BOT_NEAR_PERFECT_TOLERANCE = 2;
-export const BOT_MISTAKE_TOLERANCE = 5;
-const BOT_MISTAKE_CHANCE = 0.12;
+export const BOT_NEAR_PERFECT_TOLERANCE = 1.5;
+export const BOT_MISTAKE_TOLERANCE = 2.6;
+const BOT_MISTAKE_CHANCE = 0.045;
 
 export interface AttractState {
   idleSeconds: number;

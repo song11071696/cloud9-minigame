@@ -44,6 +44,8 @@ export interface RendererScene {
   duelRounds: readonly [RoundSnapshot, RoundSnapshot] | null;
   duelOut: readonly [boolean, boolean];
   duelWinner: DuelWinner | null;
+  lockoutProgress: number;
+  cloudNineAge: number;
   operator: { open: boolean; confirmClear: boolean; selected: number; version: string };
 }
 
@@ -111,6 +113,7 @@ export class CanvasRenderer {
 
     if (scene.perfectAge >= 0 && scene.perfectAge < 1.15) this.drawPerfect(scene, minSide);
     if (!scene.reducedMotion && scene.layerFlash > 0) this.drawLayerBanner(round, scene, minSide);
+    if (scene.cloudNineAge >= 0) this.drawCloudNineMoment(scene, minSide);
     this.drawScreen(scene, minSide);
     if (scene.operator.open) this.drawOperatorPanel(scene, minSide);
   }
@@ -456,6 +459,35 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
+  private drawCloudNineMoment(scene: RendererScene, minSide: number): void {
+    const ctx = this.context;
+    const age = scene.cloudNineAge;
+    if (!scene.reducedMotion) {
+      const colors = ['#fff0a8', '#ffcf5a', '#8de8ff', '#ffffff', '#b6a2ff'];
+      for (let index = 0; index < 56; index += 1) {
+        const angle = index * 2.399;
+        const speed = minSide * (0.19 + (index * 17 % 11) * 0.012);
+        const x = this.width / 2 + Math.cos(angle) * speed * age;
+        const y = this.height * 0.4 + Math.sin(angle) * speed * age + age * age * minSide * 0.12;
+        if (x < -12 || x > this.width + 12 || y < -12 || y > this.height + 12) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, 1 - age / 3.5);
+        ctx.fillStyle = colors[index % colors.length]!;
+        ctx.translate(x, y);
+        ctx.rotate(angle + age * (index % 2 === 0 ? 2 : -2));
+        ctx.fillRect(-minSide * 0.006, -minSide * 0.012, minSide * 0.012, minSide * 0.024);
+        ctx.restore();
+      }
+    }
+    ctx.save();
+    ctx.fillStyle = '#8c5b12ee';
+    ctx.fillRect(0, this.height * 0.34, this.width, this.height * 0.14);
+    ctx.fillStyle = '#ffe08a';
+    ctx.fillRect(0, this.height * 0.34, this.width, Math.max(3, minSide * 0.006));
+    this.text('CLOUD NINE!', this.width / 2, this.height * 0.41, Math.max(32, minSide * 0.105), 'center', '#fff5c2');
+    ctx.restore();
+  }
+
   private drawScreen(scene: RendererScene, minSide: number): void {
     const ctx = this.context;
     const centerX = this.width / 2;
@@ -465,21 +497,11 @@ export class CanvasRenderer {
     if (scene.screen === 'play') return;
 
     ctx.save();
-    ctx.fillStyle = scene.screen === 'attract' ? '#111a3450' : '#111a34bd';
+    ctx.fillStyle = scene.screen === 'attract' ? '#07112699' : '#111a34bd';
     ctx.fillRect(0, 0, this.width, this.height);
 
     if (scene.screen === 'attract') {
-      this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, this.height * 0.065, Math.max(13, minSide * 0.025), 'center', '#e7f5ff');
-      this.text('DEMO', this.width * 0.93, this.height * 0.12, Math.max(14, minSide * 0.03), 'center', '#ffe8a6');
-      this.text('SKYLINE STACK', centerX, centerY - minSide * 0.12, big, 'center', '#fff8e4');
-      this.text('Stack to Cloud Nine', centerX, centerY - minSide * 0.02, medium, 'center', '#d2f3ff');
-      const blink = scene.reducedMotion || Math.sin(scene.elapsed * 3.2) > -0.15;
-      if (blink) this.text('TAP / PRESS ANY BUTTON', centerX, centerY + minSide * 0.1, medium, 'center', '#ffe8a6');
-      this.text(scene.duelMode ? 'DUEL MODE · P1 LEFT / P2 RIGHT' : '60 SECONDS · ONE BUTTON · NINE LAYERS', centerX, this.height * 0.84, Math.max(13, medium * 0.62), 'center', '#ffffff');
-      this.drawLeaderboard(scene, minSide, centerY + minSide * 0.24, false);
-      if (scene.todayBest) {
-        this.text(`TODAY'S BEST  ${scene.todayBest.initials} · ${scene.todayBest.score.toLocaleString()}`, centerX, centerY + minSide * 0.31, Math.max(14, minSide * 0.031), 'center', '#ffe8a6');
-      }
+      this.drawAttractCard(scene, minSide, centerX, centerY, big, medium);
     } else if (scene.screen === 'countdown') {
       const countdown = Math.max(1, Math.ceil(scene.round.countdownRemaining));
       this.text(countdown.toString(), centerX, centerY + big * 0.35, big * 2.2, 'center', '#fff5ce');
@@ -503,7 +525,11 @@ export class CanvasRenderer {
         ];
         rows.forEach((row, index) => this.text(row, centerX, centerY + minSide * (index * 0.065), Math.max(15, medium * 0.78), 'center'));
       }
-      this.text('PRESS TO CONTINUE', centerX, centerY + minSide * 0.23, medium * 0.8, 'center', '#ffe8a6');
+      const prompt = scene.lockoutProgress < 1
+        ? 'PLEASE WAIT'
+        : scene.duelRounds ? 'PRESS TO RETURN · AUTO IN 6s' : 'PRESS TO CONTINUE';
+      this.text(prompt, centerX, centerY + minSide * 0.23, medium * 0.8, 'center', '#ffe8a6');
+      this.drawLockoutProgress(scene.lockoutProgress, minSide);
     } else if (scene.screen === 'initials') {
       this.text('NEW HIGH SCORE', centerX, centerY - minSide * 0.15, big * 0.82, 'center', '#fff2ac');
       this.text(scene.initials.split('').join('  '), centerX, centerY + minSide * 0.01, big * 1.35, 'center');
@@ -518,9 +544,118 @@ export class CanvasRenderer {
       this.text('SKYLINE HALL OF HEIGHT', centerX, centerY - minSide * 0.31, big * 0.76, 'center', '#fff2ac');
       this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, centerY - minSide * 0.25, Math.max(13, minSide * 0.024), 'center', '#e7f5ff');
       this.drawLeaderboard(scene, minSide, centerY - minSide * 0.19, true);
-      this.text('PRESS TO PLAY AGAIN', centerX, this.height - minSide * 0.12, medium * 0.82, 'center', '#ffe8a6');
+      this.text(scene.lockoutProgress < 1 ? 'PLEASE WAIT' : 'PRESS TO PLAY AGAIN', centerX, this.height - minSide * 0.12, medium * 0.82, 'center', '#ffe8a6');
+      this.drawLockoutProgress(scene.lockoutProgress, minSide);
     }
     ctx.restore();
+  }
+
+  private drawAttractCard(
+    scene: RendererScene,
+    minSide: number,
+    centerX: number,
+    centerY: number,
+    big: number,
+    medium: number,
+  ): void {
+    const ctx = this.context;
+    const card = Math.floor(scene.elapsed / 6) % 3;
+    const panelWidth = this.width * 0.86;
+    const panelHeight = this.height * 0.68;
+    const panelTop = this.height * 0.16;
+    ctx.save();
+    ctx.fillStyle = '#08152de0';
+    ctx.strokeStyle = '#f6d88c88';
+    ctx.lineWidth = Math.max(2, minSide * 0.003);
+    ctx.beginPath();
+    ctx.roundRect(centerX - panelWidth / 2, panelTop, panelWidth, panelHeight, Math.max(12, minSide * 0.035));
+    ctx.fill();
+    ctx.stroke();
+    this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, this.height * 0.065, Math.max(14, minSide * 0.027), 'center', '#e7f5ff');
+    this.text('DEMO', this.width * 0.93, this.height * 0.12, Math.max(16, minSide * 0.032), 'center', '#ffe8a6');
+
+    if (card === 0) {
+      this.text('SKYLINE STACK', centerX, centerY - minSide * 0.14, big, 'center', '#fff8e4');
+      this.text('Stack to Cloud Nine', centerX, centerY - minSide * 0.015, medium, 'center', '#d2f3ff');
+      const blink = scene.reducedMotion || Math.sin(scene.elapsed * 3.2) > -0.15;
+      if (blink) this.text('TAP / PRESS ANY BUTTON', centerX, centerY + minSide * 0.13, medium, 'center', '#ffe8a6');
+      this.text(scene.duelMode ? 'DUEL MODE · P1 LEFT / P2 RIGHT' : '60 SECONDS · ONE BUTTON · NINE LAYERS', centerX, centerY + minSide * 0.27, Math.max(14, medium * 0.62), 'center');
+    } else if (card === 1) {
+      this.text('SKYLINE HALL OF HEIGHT', centerX, centerY - minSide * 0.3, Math.max(28, big * 0.72), 'center', '#fff2ac');
+      this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, centerY - minSide * 0.23, Math.max(14, minSide * 0.026), 'center', '#e7f5ff');
+      this.drawLeaderboard(scene, minSide, centerY - minSide * 0.15, true, 6);
+      this.text('TAP TO TAKE YOUR PLACE', centerX, centerY + minSide * 0.31, Math.max(14, medium * 0.64), 'center', '#ffe8a6');
+    } else {
+      this.text('HOW TO PLAY', centerX, centerY - minSide * 0.29, Math.max(30, big * 0.72), 'center', '#fff2ac');
+      const rows = [
+        { y: centerY - minSide * 0.1, text: '1  TAP to drop the block', secondLine: null, icon: 0 },
+        { y: centerY + minSide * 0.08, text: '2  Line it up — overhang is sliced off', secondLine: null, icon: 1 },
+        { y: centerY + minSide * 0.22, text: '3  PERFECT x3 grows it back ·', secondLine: 'reach CLOUD NINE in 60 s', icon: 2 },
+      ];
+      for (const row of rows) {
+        this.drawHowToIcon(centerX - minSide * 0.32, row.y, minSide, row.icon);
+        const textSize = Math.max(16, minSide * 0.04);
+        this.text(row.text, centerX - minSide * 0.23, row.y, textSize, 'left', '#f4f8ff');
+        if (row.secondLine) {
+          this.text(row.secondLine, centerX - minSide * 0.23, row.y + textSize * 1.1, textSize, 'left', '#f4f8ff');
+        }
+      }
+    }
+    this.text('Made for the Cloud9 booth · Built with JetBrains Junie', centerX, this.height * 0.94, Math.max(13, minSide * 0.024), 'center', '#ffffff');
+    ctx.restore();
+  }
+
+  private drawHowToIcon(x: number, y: number, minSide: number, icon: number): void {
+    const ctx = this.context;
+    const size = minSide * 0.07;
+    ctx.save();
+    ctx.strokeStyle = '#ffe8a6';
+    ctx.fillStyle = '#a9e3ed';
+    ctx.lineWidth = Math.max(3, minSide * 0.006);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (icon === 0) {
+      ctx.fillRect(x - size * 0.48, y + size * 0.2, size * 0.96, size * 0.22);
+      ctx.strokeRect(x - size * 0.34, y - size * 0.3, size * 0.68, size * 0.34);
+      ctx.beginPath();
+      ctx.moveTo(x, y - size * 0.62);
+      ctx.lineTo(x, y - size * 0.4);
+      ctx.lineTo(x - size * 0.12, y - size * 0.52);
+      ctx.moveTo(x, y - size * 0.4);
+      ctx.lineTo(x + size * 0.12, y - size * 0.52);
+      ctx.stroke();
+    } else if (icon === 1) {
+      ctx.strokeRect(x - size * 0.5, y - size * 0.12, size, size * 0.34);
+      ctx.beginPath();
+      ctx.moveTo(x - size * 0.42, y - size * 0.42);
+      ctx.lineTo(x + size * 0.42, y - size * 0.42);
+      ctx.moveTo(x, y - size * 0.32);
+      ctx.lineTo(x, y + size * 0.34);
+      ctx.stroke();
+    } else {
+      ctx.fillRect(x - size * 0.5, y + size * 0.22, size, size * 0.22);
+      ctx.beginPath();
+      for (let point = 0; point < 8; point += 1) {
+        const angle = -Math.PI / 2 + point * Math.PI / 4;
+        const radius = point % 2 === 0 ? size * 0.47 : size * 0.2;
+        const pointX = x + Math.cos(angle) * radius;
+        const pointY = y - size * 0.12 + Math.sin(angle) * radius;
+        if (point === 0) ctx.moveTo(pointX, pointY);
+        else ctx.lineTo(pointX, pointY);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private drawLockoutProgress(progress: number, minSide: number): void {
+    const ctx = this.context;
+    const height = Math.max(4, minSide * 0.007);
+    ctx.fillStyle = '#ffffff55';
+    ctx.fillRect(0, this.height - height, this.width, height);
+    ctx.fillStyle = '#ffe08a';
+    ctx.fillRect(0, this.height - height, this.width * Math.max(0, Math.min(1, progress)), height);
   }
 
   private drawOperatorPanel(scene: RendererScene, minSide: number): void {
@@ -555,13 +690,19 @@ export class CanvasRenderer {
     ctx.restore();
   }
 
-  private drawLeaderboard(scene: RendererScene, minSide: number, startY: number, full: boolean): void {
+  private drawLeaderboard(
+    scene: RendererScene,
+    minSide: number,
+    startY: number,
+    full: boolean,
+    limit = 10,
+  ): void {
     const ctx = this.context;
     if (!scene.leaderboard.length) {
-      this.text('BE THE FIRST ON THE BOARD', this.width / 2, startY + minSide * 0.035, Math.max(14, minSide * 0.035), 'center');
+      this.text('NO SCORES YET · BE THE FIRST', this.width / 2, startY + minSide * 0.035, Math.max(14, minSide * 0.035), 'center');
       return;
     }
-    const count = full ? Math.min(10, scene.leaderboard.length) : 1;
+    const count = full ? Math.min(limit, scene.leaderboard.length) : 1;
     const index = full ? 0 : scene.leaderboardIndex % scene.leaderboard.length;
     for (let row = 0; row < count; row += 1) {
       const entryIndex = full ? row : index;
