@@ -1,4 +1,5 @@
 export const SCREEN_INPUT_LOCKOUT_SECONDS = 1.2;
+export const GAME_OVER_INPUT_LOCKOUT_SECONDS = 2;
 
 export function getScreenLockoutProgress(
   elapsed: number,

@@ -11,7 +11,7 @@ function flowState(overrides: Partial<ScreenFlowState> = {}): ScreenFlowState {
     duelOut: [false, false],
     screenElapsed: 0,
     hasCandidateEntry: false,
-    lockoutSeconds: 1.2,
+    lockoutSeconds: 2,
     ...overrides,
   };
 }
@@ -64,10 +64,32 @@ describe('app screen flow', () => {
     expect(nextScreen(flowState({ screen: 'game-over', action: 'advance' }))).toBe('game-over');
     expect(nextScreen(flowState({
       screen: 'game-over',
-      screenElapsed: 1.2,
+      screenElapsed: 1.999,
+      hasCandidateEntry: true,
+      action: 'advance',
+    }))).toBe('game-over');
+    expect(nextScreen(flowState({
+      screen: 'game-over',
+      screenElapsed: 2,
       hasCandidateEntry: true,
       action: 'advance',
     }))).toBe('initials');
+  });
+
+  it('keeps duel results and leaderboard on the shorter lockout', () => {
+    expect(nextScreen(flowState({
+      screen: 'game-over',
+      duelSession: true,
+      lockoutSeconds: 1.2,
+      screenElapsed: 1.2,
+      action: 'advance',
+    }))).toBe('attract');
+    expect(nextScreen(flowState({
+      screen: 'leaderboard',
+      lockoutSeconds: 1.2,
+      screenElapsed: 1.199,
+      action: 'advance',
+    }))).toBe('leaderboard');
   });
 
   it('identifies entry side effects only on the transition into a screen', () => {

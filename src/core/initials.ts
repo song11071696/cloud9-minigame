@@ -1,4 +1,6 @@
 const INITIAL_CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+export const INITIALS_HOLD_SECONDS = 0.6;
+export const INITIALS_IDLE_TIMEOUT_SECONDS = 15;
 
 export interface InitialsState {
   value: string;
@@ -6,8 +8,21 @@ export interface InitialsState {
   complete: boolean;
 }
 
+export function getInitialsButtonAction(heldSeconds: number): 'tap' | 'hold' {
+  return Number.isFinite(heldSeconds) && heldSeconds >= INITIALS_HOLD_SECONDS ? 'hold' : 'tap';
+}
+
+export function shouldAutoSaveInitials(idleSeconds: number): boolean {
+  return Number.isFinite(idleSeconds) && idleSeconds >= INITIALS_IDLE_TIMEOUT_SECONDS;
+}
+
 export function createInitialsState(): InitialsState {
   return { value: 'AAA', cursor: 0, complete: false };
+}
+
+export function completeInitials(state: InitialsState): InitialsState {
+  if (state.complete) return state;
+  return { value: state.value.slice(0, 3).padEnd(3, 'A'), cursor: 3, complete: true };
 }
 
 export function tapInitials(state: InitialsState): InitialsState {

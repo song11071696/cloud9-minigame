@@ -1,11 +1,25 @@
 import { createDemoBot, updateDemoBot, type DemoBotState } from './core/attract';
-import { createInitialsState, holdInitials, tapInitials, typeInitialKey, type InitialsState } from './core/initials';
+import {
+  completeInitials,
+  createInitialsState,
+  getInitialsButtonAction,
+  holdInitials,
+  INITIALS_HOLD_SECONDS,
+  shouldAutoSaveInitials,
+  tapInitials,
+  typeInitialKey,
+  type InitialsState,
+} from './core/initials';
 import { Leaderboard, sanitizeEventKey, type LeaderboardEntry, type StorageLike } from './core/leaderboard';
 import { getDuelOutcome, type DuelWinner } from './core/duel';
 import { enteredScreen, nextScreen, type AppScreen, type ScreenFlowAction } from './core/flow';
 import { shouldReturnToAttract } from './core/kiosk';
 import { nextRandom } from './core/rng';
-import { getScreenLockoutProgress, SCREEN_INPUT_LOCKOUT_SECONDS } from './core/screen-lockout';
+import {
+  GAME_OVER_INPUT_LOCKOUT_SECONDS,
+  getScreenLockoutProgress,
+  SCREEN_INPUT_LOCKOUT_SECONDS,
+} from './core/screen-lockout';
 import {
   createRound,
   getRoundSnapshot,
@@ -71,7 +85,6 @@ const board = new Leaderboard(safeStorage);
 const audio = new SynthAudio(params.get('mute') === '1');
 const renderer = new CanvasRenderer(canvas);
 const STEP = 1 / 120;
-const INITIAL_HOLD_SECONDS = 0.6;
 
 let screen: AppScreen = 'attract';
 let round: RoundState = createRound(nextRoundSeed());
@@ -92,8 +105,9 @@ let perfectAge = -1;
 let layerFlash = 0;
 let debris: DebrisAnimation[] = [];
 let initials: InitialsState = createInitialsState();
-let initialsGesture: { started: number; player: 0 | 1 } | null = null;
+let initialsGesture: { started: number; player: 0 | 1; key?: string } | null = null;
 let holdProgress = 0;
+let initialsIdleSeconds = 0;
 let highlightedEntry: LeaderboardEntry | null = null;
 let candidateEntry: LeaderboardEntry | null = null;
 let ignoreNextKeyboardPress = false;
@@ -162,15 +176,19 @@ function updateInitialsGesture(now: number, holds: readonly [boolean, boolean]):
     return;
   }
   const duration = Math.max(0, (now - initialsGesture.started) / 1000);
+  if (initialsGesture.key) {
+    holdProgress = Math.min(1, duration / INITIALS_HOLD_SECONDS);
+    return;
+  }
   const isHeld = holds[initialsGesture.player];
-  holdProgress = Math.min(1, duration / INITIAL_HOLD_SECONDS);
-  if (isHeld && duration >= INITIAL_HOLD_SECONDS) {
+  holdProgress = Math.min(1, duration / INITIALS_HOLD_SECONDS);
+  if (isHeld && duration >= INITIALS_HOLD_SECONDS) {
     initials = holdInitials(initials);
     initialsGesture = null;
     holdProgress = 0;
     saveInitials();
   } else if (!isHeld) {
-    if (duration < INITIAL_HOLD_SECONDS) initials = tapInitials(initials);
+    if (duration < INITIALS_HOLD_SECONDS) initials = tapInitials(initials);
     else initials = holdInitials(initials);
     initialsGesture = null;
     holdProgress = 0;
@@ -181,6 +199,7 @@ function updateInitialsGesture(now: number, holds: readonly [boolean, boolean]):
 function noteActivity(): void {
   inputActivity = true;
   kioskIdleSeconds = 0;
+  if (screen === 'initials') initialsIdleSeconds = 0;
   activateGesture();
 }
 
@@ -328,6 +347,8 @@ function onInput(event: PressEvent): void {
   }
 }
 
+const INITIALS_BUTTON_KEYS = new Set([' ', 'space', 'spacebar', 'enter', 'arrowup']);
+
 function onKey(key: string): void {
   const normalized = key.toLowerCase();
   if (operatorOpen) {
@@ -349,11 +370,26 @@ function onKey(key: string): void {
   }
   if (screen === 'initials') {
     const normalized = key.toLowerCase();
-    ignoreNextKeyboardPress = [' ', 'space', 'spacebar', 'enter', 'arrowup'].includes(normalized);
+    if (INITIALS_BUTTON_KEYS.has(normalized)) {
+      initialsGesture = { started: performance.now(), player: 0, key: normalized };
+      holdProgress = 0;
+      return;
+    }
     initials = typeInitialKey(initials, key);
     saveInitials();
     return;
   }
+}
+
+function onKeyUp(key: string): void {
+  if (screen !== 'initials' || !initialsGesture?.key) return;
+  if (initialsGesture.key !== key.toLowerCase()) return;
+  const duration = (performance.now() - initialsGesture.started) / 1000;
+  initials = getInitialsButtonAction(duration) === 'hold' ? holdInitials(initials) : tapInitials(initials);
+  initialsGesture = null;
+  holdProgress = 0;
+  initialsIdleSeconds = 0;
+  saveInitials();
 }
 
 const onCornerPointerDown = (event: PointerEvent): void => {
@@ -378,6 +414,7 @@ const input: InputController = createInput(canvas, {
   isDuel: () => duelEnabled || duelSession,
   onPress: onInput,
   onKey,
+  onKeyUp,
   onGesture: activateGesture,
   onActivity: noteActivity,
 });
@@ -468,6 +505,9 @@ function transitionTo(next: AppScreen): void {
   }
   if (enteredScreen(previous, next, 'initials')) {
     initials = createInitialsState();
+    initialsGesture = null;
+    holdProgress = 0;
+    initialsIdleSeconds = 0;
     audio.highScore();
   }
   if (enteredScreen(previous, next, 'attract')) {
@@ -486,7 +526,9 @@ function applyScreenFlow(action?: ScreenFlowAction): void {
     duelOut: [round.endReason === 'missed', duelRound.endReason === 'missed'],
     screenElapsed,
     hasCandidateEntry: candidateEntry !== null,
-    lockoutSeconds: SCREEN_INPUT_LOCKOUT_SECONDS,
+    lockoutSeconds: screen === 'game-over' && !duelSession
+      ? GAME_OVER_INPUT_LOCKOUT_SECONDS
+      : SCREEN_INPUT_LOCKOUT_SECONDS,
     ...(action ? { action } : {}),
   });
   transitionTo(next);
@@ -507,6 +549,15 @@ function update(dt: number): void {
   if (screen === 'attract') updateDemo(dt);
   updateRoundState(dt);
   applyScreenFlow();
+  if (screen === 'initials') {
+    initialsIdleSeconds += dt;
+    if (shouldAutoSaveInitials(initialsIdleSeconds)) {
+      initials = completeInitials(initials);
+      saveInitials();
+    }
+  } else {
+    initialsIdleSeconds = 0;
+  }
   if (kioskMode) {
     if (inputActivity) kioskIdleSeconds = 0;
     else if (screen === 'play') kioskIdleSeconds = 0;
@@ -553,6 +604,7 @@ function render(dt: number): void {
     todayBest: entries[0] ?? null,
     eventName,
     initials: initials.value,
+    initialsCursor: initials.cursor,
     holdProgress,
     muted: audio.isMuted,
     reducedMotion,
@@ -561,7 +613,12 @@ function render(dt: number): void {
     duelOut: [round.endReason === 'missed', duelRound.endReason === 'missed'],
     duelWinner,
     lockoutProgress: screen === 'game-over' || screen === 'leaderboard'
-      ? getScreenLockoutProgress(screenElapsed)
+      ? getScreenLockoutProgress(
+        screenElapsed,
+        screen === 'game-over' && !duelSession
+          ? GAME_OVER_INPUT_LOCKOUT_SECONDS
+          : SCREEN_INPUT_LOCKOUT_SECONDS,
+      )
       : 1,
     cloudNineAge,
     operator: { open: operatorOpen, confirmClear: operatorConfirmClear, selected: operatorSelected, version: packageInfo.version },

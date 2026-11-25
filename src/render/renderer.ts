@@ -36,6 +36,7 @@ export interface RendererScene {
   todayBest: LeaderboardEntry | null;
   eventName: string;
   initials: string;
+  initialsCursor: number;
   holdProgress: number;
   muted: boolean;
   reducedMotion: boolean;
@@ -531,14 +532,27 @@ export class CanvasRenderer {
       this.drawLockoutProgress(scene.lockoutProgress, minSide);
     } else if (scene.screen === 'initials') {
       this.text('NEW HIGH SCORE', centerX, centerY - minSide * 0.15, big * 0.82, 'center', '#fff2ac');
-      this.text(scene.initials.split('').join('  '), centerX, centerY + minSide * 0.01, big * 1.35, 'center');
-      this.text('TAP: NEXT LETTER', centerX, centerY + minSide * 0.13, medium * 0.8, 'center');
-      const holdWidth = this.width * 0.42;
-      ctx.fillStyle = '#ffffff55';
-      ctx.fillRect(centerX - holdWidth / 2, centerY + minSide * 0.17, holdWidth, 8);
-      ctx.fillStyle = '#ffe8a6';
-      ctx.fillRect(centerX - holdWidth / 2, centerY + minSide * 0.17, holdWidth * scene.holdProgress, 8);
-      this.text('HOLD 0.6s: CONFIRM  ·  TYPE 3 LETTERS', centerX, centerY + minSide * 0.24, Math.max(14, medium * 0.68), 'center');
+      const slotSpacing = minSide * 0.15;
+      const slotY = centerY + minSide * 0.01;
+      scene.initials.split('').forEach((character, index) => {
+        const active = index === scene.initialsCursor && scene.initialsCursor < 3;
+        const slotX = centerX + (index - 1) * slotSpacing;
+        this.text(character, slotX, slotY, big * (active ? 1.5 : 1.35), 'center', active ? '#ffe8a6' : '#ffffff');
+        if (!active) return;
+        const barWidth = minSide * 0.105;
+        const barHeight = Math.max(5, minSide * 0.009);
+        ctx.fillStyle = '#ffe8a6';
+        ctx.fillRect(slotX - barWidth / 2, centerY + minSide * 0.105, barWidth, barHeight);
+        if (scene.holdProgress > 0) {
+          const progressY = centerY + minSide * 0.135;
+          ctx.fillStyle = '#ffffff55';
+          ctx.fillRect(slotX - barWidth / 2, progressY, barWidth, barHeight);
+          ctx.fillStyle = '#ffe8a6';
+          ctx.fillRect(slotX - barWidth / 2, progressY, barWidth * scene.holdProgress, barHeight);
+        }
+      });
+      this.text('TAP / SHORT PRESS: NEXT LETTER', centerX, centerY + minSide * 0.22, medium * 0.8, 'center');
+      this.text('HOLD 0.6s: CONFIRM  ·  TYPE 3 LETTERS', centerX, centerY + minSide * 0.3, Math.max(14, medium * 0.68), 'center');
     } else if (scene.screen === 'leaderboard') {
       this.text('SKYLINE HALL OF HEIGHT', centerX, centerY - minSide * 0.31, big * 0.76, 'center', '#fff2ac');
       this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, centerY - minSide * 0.25, Math.max(13, minSide * 0.024), 'center', '#e7f5ff');
@@ -562,6 +576,7 @@ export class CanvasRenderer {
     const panelWidth = this.width * 0.86;
     const panelHeight = this.height * 0.68;
     const panelTop = this.height * 0.16;
+    const panelHeaderY = panelTop + minSide * 0.12;
     ctx.save();
     ctx.fillStyle = '#08152de0';
     ctx.strokeStyle = '#f6d88c88';
@@ -577,15 +592,15 @@ export class CanvasRenderer {
       this.text('SKYLINE STACK', centerX, centerY - minSide * 0.14, big, 'center', '#fff8e4');
       this.text('Stack to Cloud Nine', centerX, centerY - minSide * 0.015, medium, 'center', '#d2f3ff');
       const blink = scene.reducedMotion || Math.sin(scene.elapsed * 3.2) > -0.15;
-      if (blink) this.text('TAP / PRESS ANY BUTTON', centerX, centerY + minSide * 0.13, medium, 'center', '#ffe8a6');
+      if (blink) this.text('TAP / PRESS ANY BUTTON TO PLAY', centerX, centerY + minSide * 0.13, Math.max(24, minSide * 0.06), 'center', '#ffe8a6');
       this.text(scene.duelMode ? 'DUEL MODE · P1 LEFT / P2 RIGHT' : '60 SECONDS · ONE BUTTON · NINE LAYERS', centerX, centerY + minSide * 0.27, Math.max(14, medium * 0.62), 'center');
     } else if (card === 1) {
-      this.text('SKYLINE HALL OF HEIGHT', centerX, centerY - minSide * 0.3, Math.max(28, big * 0.72), 'center', '#fff2ac');
-      this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, centerY - minSide * 0.23, Math.max(14, minSide * 0.026), 'center', '#e7f5ff');
-      this.drawLeaderboard(scene, minSide, centerY - minSide * 0.15, true, 6);
+      this.text('SKYLINE HALL OF HEIGHT', centerX, panelHeaderY, Math.max(28, big * 0.72), 'center', '#fff2ac');
+      this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, panelHeaderY + minSide * 0.075, Math.max(14, minSide * 0.026), 'center', '#e7f5ff');
+      this.drawLeaderboard(scene, minSide, panelHeaderY + minSide * 0.16, true, 6);
       this.text('TAP TO TAKE YOUR PLACE', centerX, centerY + minSide * 0.31, Math.max(14, medium * 0.64), 'center', '#ffe8a6');
     } else {
-      this.text('HOW TO PLAY', centerX, centerY - minSide * 0.29, Math.max(30, big * 0.72), 'center', '#fff2ac');
+      this.text('HOW TO PLAY', centerX, panelHeaderY, Math.max(30, big * 0.72), 'center', '#fff2ac');
       const rows = [
         { y: centerY - minSide * 0.1, text: '1  TAP to drop the block', secondLine: null, icon: 0 },
         { y: centerY + minSide * 0.08, text: '2  Line it up — overhang is sliced off', secondLine: null, icon: 1 },

@@ -13,6 +13,7 @@ export interface InputOptions {
   isDuel: () => boolean;
   onPress: (event: PressEvent) => void;
   onKey?: (key: string) => void;
+  onKeyUp?: (key: string) => void;
   onGesture?: () => void;
   onActivity?: () => void;
 }
@@ -70,8 +71,9 @@ export function createInput(canvas: HTMLCanvasElement, options: InputOptions): I
 
   const keyup = (event: KeyboardEvent): void => {
     const token = event.key.toLowerCase();
-    heldKeys.delete(token);
+    if (!heldKeys.delete(token)) return;
     keyPlayers.delete(token);
+    options.onKeyUp?.(event.key);
   };
 
   const pointerdown = (event: PointerEvent): void => {
