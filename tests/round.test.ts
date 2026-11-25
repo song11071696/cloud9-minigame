@@ -7,6 +7,7 @@ import {
   ROUND_SECONDS,
   updateRound,
 } from '../src/core/round';
+import { GROWTH_WIDTH } from '../src/core/stack';
 
 describe('round state machine', () => {
   it('moves from ready through countdown to play, then ends on time-up', () => {
@@ -30,6 +31,25 @@ describe('round state machine', () => {
     expect(round.phase).toBe('playing');
     expect(round.timeRemaining).toBe(ROUND_SECONDS - 1);
     expect(round.movingBlock).not.toBeNull();
+  });
+
+  it('regains width after three perfect drops on a narrowed tower', () => {
+    let round = updateRound(pressRound(createRound()), COUNTDOWN_SECONDS);
+    round = {
+      ...round,
+      blocks: [{ x: 25, width: 50, direction: 1 }],
+      movingBlock: { x: 25, width: 50, direction: 1 },
+    };
+
+    for (let drop = 0; drop < 3; drop += 1) {
+      const base = round.blocks.at(-1)!;
+      round = pressRound({
+        ...round,
+        movingBlock: { x: base.x, width: base.width, direction: 1 },
+      });
+    }
+
+    expect(round.blocks.at(-1)?.width).toBe(50 + GROWTH_WIDTH);
   });
 
   it('scores a perfect press and ends when the next block misses', () => {

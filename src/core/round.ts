@@ -5,6 +5,7 @@ import {
   createBaseBlock,
   createMovingBlock,
   dropBlock,
+  INITIAL_BLOCK_WIDTH,
   WORLD_WIDTH,
   type Block,
 } from './stack';
@@ -82,7 +83,10 @@ export function pressRound(state: RoundState): RoundState {
   if (state.phase !== 'playing' || !state.movingBlock) return state;
 
   const base = state.blocks[state.blocks.length - 1]!;
-  const result = dropBlock(state.movingBlock, base, state.perfectStreak, { worldWidth: WORLD_WIDTH });
+  const result = dropBlock(state.movingBlock, base, state.perfectStreak, {
+    worldWidth: WORLD_WIDTH,
+    maxWidth: INITIAL_BLOCK_WIDTH,
+  });
   if (!result.landed || !result.block) {
     return { ...state, phase: 'over', movingBlock: null, endReason: 'missed' };
   }

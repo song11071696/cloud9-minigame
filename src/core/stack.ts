@@ -120,7 +120,7 @@ export function dropBlock(
   const perfectStreak = perfect ? previousPerfectStreak + 1 : 0;
   const combo = perfect ? perfectStreak : 0;
   const shouldGrow = perfect && perfectStreak % PERFECTS_PER_GROWTH === 0;
-  const maximumWidth = Math.min(worldWidth, options.maxWidth ?? worldWidth, base.width);
+  const maximumWidth = Math.min(worldWidth, options.maxWidth ?? INITIAL_BLOCK_WIDTH);
   const grownWidth = shouldGrow
     ? Math.min(maximumWidth, overlapWidth + GROWTH_WIDTH)
     : overlapWidth;

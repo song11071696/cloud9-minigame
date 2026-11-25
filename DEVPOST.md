@@ -70,7 +70,7 @@ Stack: TypeScript (strict), Vite, Vitest, HTML5 Canvas 2D, Web Audio API, Gamepa
 ## Accomplishments that we're proud of
 
 - A complete booth product, not just a prototype: attract → play → initials → leaderboard → attract, plus duel, kiosk and operator tooling.
-- 56 unit tests over a fully deterministic core, and a demo bot whose quality is asserted by a test.
+- 61 unit tests over a fully deterministic core, and a demo bot whose quality is asserted by a test.
 - Zero assets and zero backend: the whole game is a few hundred KB of static files that runs offline.
 - Junie reviewed its own code (`junie --review`), found a crash on a crafted event name plus two input edge cases, and then fixed them with regression tests.
 - A transparent AI workflow. Every Junie prompt and transcript is committed, so judges can trace each feature to the agent run that produced it.

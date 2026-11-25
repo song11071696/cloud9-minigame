@@ -33,7 +33,7 @@ import {
   updateRound,
   type RoundState,
 } from './core/round';
-import { dropBlock, WORLD_WIDTH } from './core/stack';
+import { dropBlock, INITIAL_BLOCK_WIDTH, WORLD_WIDTH } from './core/stack';
 import { SynthAudio } from './audio/synth';
 import { createInput, type InputController, type PressEvent } from './input/input';
 import { CanvasRenderer, type DebrisAnimation, type RendererScene } from './render/renderer';
@@ -340,7 +340,10 @@ function dropForPlayer(player: 0 | 1): void {
   if (activeRound.phase !== 'playing' || !activeRound.movingBlock) return;
   const moving = activeRound.movingBlock;
   const target = activeRound.blocks[activeRound.blocks.length - 1]!;
-  const result = dropBlock(moving, target, activeRound.perfectStreak, { worldWidth: WORLD_WIDTH });
+  const result = dropBlock(moving, target, activeRound.perfectStreak, {
+    worldWidth: WORLD_WIDTH,
+    maxWidth: INITIAL_BLOCK_WIDTH,
+  });
   const updated = pressRound(activeRound);
   if (player === 0) round = updated;
   else duelRound = updated;

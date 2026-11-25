@@ -6,8 +6,8 @@ This is how **Skyline Stack** was built for the Cloud9 x JetBrains "Sky's The Li
 
 - **Tool:** JetBrains **Junie CLI** 26.11.3 (build 4171.6), installed with the official script on a **Linux arm64** cloud sandbox, so no desktop IDE was involved.
 - **Sign-in:** a JetBrains Account (Google sign-in) using the browser OAuth flow. Junie ran on the free **Junie Lite** tier. The session summaries report a model cost of `0.0` for every run. No paid licence, API key or credit card was used.
-- **Mode:** **headless** (`junie --task "…"`). There were 8 milestone tasks. Each one ran unattended in the repo, and Junie ran `npm test` and `npm run build` itself before it reported back.
-- **Output:** 18 TypeScript source files (~2,800 lines) and 14 vitest files (56 tests). Junie wrote all of them, and all of them pass.
+- **Mode:** **headless** (`junie --task "…"`). There were 9 tasks (8 milestones plus one playtest bug fix). Each one ran unattended in the repo, and Junie ran `npm test` and `npm run build` itself before it reported back.
+- **Output:** 18 TypeScript source files (~2,800 lines) and 14 vitest files (61 tests). Junie wrote all of them, and all of them pass.
 - **Evidence:** the prompt for every task and Junie's verbatim transcript are in [`.junie/sessions/`](.junie/sessions/). The standing brief is [`.junie/guidelines.md`](.junie/guidelines.md). Each Junie milestone is a separate git commit whose message starts with `Junie task 0N`.
 
 ## Who did what
@@ -48,6 +48,7 @@ guidelines.md ──► junie --task "TASK N …" ──► Junie: read code →
 | 07 | Result-screen layout | Hid the HUD on result screens, panel layout, reason-specific game-over (TOWER TOPPLED! / TIME!), big top-10 rows with rank accents, inline SVG favicon and meta tags | 51 |
 | review | `junie --review` over all task commits | Junie's review mode (with delegated read-only audits) found 3 real issues: `?event=constructor` crashed the leaderboard (prototype key), O/M could not be typed as initials because they were global shortcuts, and a released wake lock was never re-acquired. It confirmed the first with a temporary failing test | — |
 | 08 | Fix the review findings | Prototype-safe leaderboard maps, pure `keyboard-shortcuts.ts` dispatch that yields to initials typing, wake-lock release handling with rate-limited re-acquire, plus regression tests | 56 |
+| 09 | Playtest bug: PERFECT x3 never regrew | `dropBlock` capped the regrown width at the base block, so grow-back was a no-op; Junie moved the cap to the start width (60) and passed it explicitly from round and duel code, with regression tests | 61 |
 
 ## Four moments that show the workflow
 
@@ -63,12 +64,12 @@ guidelines.md ──► junie --task "TASK N …" ──► Junie: read code →
 
 | Metric | Value |
 |---|---|
-| Junie headless runs | 8 build/fix tasks + 1 `junie --review` run |
+| Junie headless runs | 9 build/fix tasks + 1 `junie --review` run |
 | Model reported by Junie | `junie-lite/gpt-6-luna` (Junie Lite, free tier) |
 | Reported cost per session | 0.0 |
 | Output tokens across tasks | ≈281k output tokens, ≈304k uncached input tokens, ≈10.6M cached input tokens (from Junie session summaries) |
 | Source / test files | 18 / 14 |
-| Unit tests | 56 passing |
+| Unit tests | 61 passing |
 | Lines of TypeScript (src + tests) | ≈3,450 (2,802 src + 650 tests) |
 
 ## What I learned

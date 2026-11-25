@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { advanceBlock, createBaseBlock, dropBlock } from '../src/core/stack';
+import {
+  advanceBlock,
+  createBaseBlock,
+  dropBlock,
+  GROWTH_WIDTH,
+  INITIAL_BLOCK_WIDTH,
+  WORLD_WIDTH,
+  type Block,
+} from '../src/core/stack';
 import { createRound, pressRound, updateRound } from '../src/core/round';
 
 describe('stack mechanics', () => {
@@ -59,12 +67,74 @@ describe('stack mechanics', () => {
     expect(result.chopped).toEqual([]);
   });
 
-  it('grows width by two after three perfects and respects the cap', () => {
-    const narrowerBase = { x: 20, width: 60, direction: 1 as const };
-    const growing = dropBlock({ x: 20, width: 50, direction: 1 }, narrowerBase, 2);
-    const capped = dropBlock({ x: 20, width: 60, direction: 1 }, narrowerBase, 2);
-    expect(growing.block?.width).toBe(52);
-    expect(capped.block?.width).toBe(60);
+  it('grows a narrowed block after three consecutive perfect drops', () => {
+    let tower: Block = { x: 25, width: 50, direction: 1 };
+    let perfectStreak = 0;
+
+    for (let drop = 0; drop < 3; drop += 1) {
+      const result = dropBlock(
+        { x: tower.x, width: tower.width, direction: 1 },
+        tower,
+        perfectStreak,
+      );
+      expect(result.landed).toBe(true);
+      tower = result.block!;
+      perfectStreak = result.perfectStreak;
+    }
+
+    expect(tower.width).toBe(50 + GROWTH_WIDTH);
+  });
+
+  it('never grows beyond the initial block width', () => {
+    let tower: Block = { x: 20, width: INITIAL_BLOCK_WIDTH - 1, direction: 1 };
+    let perfectStreak = 2;
+
+    for (let drop = 0; drop < 12; drop += 1) {
+      const result = dropBlock(
+        { x: tower.x, width: tower.width, direction: 1 },
+        tower,
+        perfectStreak,
+      );
+      tower = result.block!;
+      perfectStreak = result.perfectStreak;
+      expect(tower.width).toBeLessThanOrEqual(INITIAL_BLOCK_WIDTH);
+    }
+
+    expect(tower.width).toBe(INITIAL_BLOCK_WIDTH);
+  });
+
+  it('does not grow when the third drop in a streak is not perfect', () => {
+    const tower = { x: 25, width: 50, direction: 1 as const };
+    const result = dropBlock({ x: 27, width: 50, direction: 1 }, tower, 2, {
+      maxWidth: INITIAL_BLOCK_WIDTH,
+    });
+
+    expect(result.perfect).toBe(false);
+    expect(result.perfectStreak).toBe(0);
+    expect(result.block?.width).toBe(48);
+  });
+
+  it('respects an explicitly supplied maximum width', () => {
+    const tower = { x: 25, width: 50, direction: 1 as const };
+    const result = dropBlock({ x: tower.x, width: tower.width, direction: 1 }, tower, 2, {
+      maxWidth: 51,
+    });
+
+    expect(result.block?.width).toBe(51);
+  });
+
+  it('keeps a regrown block fully inside the world', () => {
+    const edgeTower = { x: WORLD_WIDTH - 10, width: 10, direction: 1 as const };
+    const result = dropBlock(
+      { x: edgeTower.x, width: edgeTower.width, direction: 1 },
+      edgeTower,
+      2,
+      { maxWidth: INITIAL_BLOCK_WIDTH },
+    );
+
+    expect(result.block?.width).toBe(10 + GROWTH_WIDTH);
+    expect(result.block!.x).toBeGreaterThanOrEqual(0);
+    expect(result.block!.x + result.block!.width).toBeLessThanOrEqual(WORLD_WIDTH);
   });
 
   it('detects a zero-overlap miss', () => {
