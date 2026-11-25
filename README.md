@@ -7,6 +7,7 @@ Entry for the **Cloud9 x JetBrains "Sky's The Limit" Hackathon 2026, Category 3:
 - **Play now:** https://song11071696.github.io/cloud9-minigame/
 - **Booth kiosk link:** https://song11071696.github.io/cloud9-minigame/?kiosk=1&event=booth
 - **Two-player duel:** https://song11071696.github.io/cloud9-minigame/?duel=1
+- **Demo video (2:22):** https://youtu.be/izD3bRWoMdg
 
 > Original game. No Riot Games names, art, sounds or UI, and no team logos. Every pixel is drawn on a `<canvas>` by code and every sound is synthesised with the Web Audio API. Zero backend, zero API keys, works offline once loaded.
 

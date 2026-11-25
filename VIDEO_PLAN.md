@@ -1,11 +1,13 @@
 # Demo video plan — Skyline Stack (target 2:30, hard limit < 3:00)
 
+**Published:** https://youtu.be/izD3bRWoMdg (2:22, public). Final cut differs slightly from the plan below: real deterministic captures of the live build (virtual clock, scripted one-button player), the game's own Web Audio output rendered offline, a code-generated music bed, burned-in captions, and a Junie segment replaying the real task 09 transcript (red tests, fix, green 61 tests) and the real `junie --review` finding.
+
 No voice-over. Everything is told with on-screen captions (burned-in, large, white on a dark bar) over screen recordings of the live build. Audio = the game's own code-generated sound effects and music only (no third-party music, no logos, no trademarks besides plain-text mentions).
 
 Recording setup
 - Live URL: https://song11071696.github.io/cloud9-minigame/ (Chrome, 1920x1080, fullscreen). Add `?seed=9` for repeatable towers; `?duel=1` for the duel segment; `?kiosk=1&event=demo` for the kiosk segment.
 - Capture with OBS (or `npx playwright` video for the attract/demo-bot shots); terminal shots of Junie CLI from the real session transcripts in `.junie/sessions/`.
-- Export 1080p30 MP4, upload to YouTube as Public (the user does this step; not done by the build agent).
+- Export 1080p30 MP4 (H.264, -14 LUFS), upload to YouTube as Public.
 
 | # | Time | Picture | Caption (burned in) |
 |---|------|---------|---------------------|

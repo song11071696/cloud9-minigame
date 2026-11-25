@@ -11,7 +11,7 @@
 - Kiosk link for booths: https://song11071696.github.io/cloud9-minigame/?kiosk=1&event=booth
 - Code (MIT): https://github.com/song11071696/cloud9-minigame
 - AI workflow story (bonus prize): https://github.com/song11071696/cloud9-minigame/blob/main/AI_SHOWCASE.md
-- Video: *(YouTube link — to be added after upload)*
+- Video: https://youtu.be/izD3bRWoMdg
 
 ---
 
@@ -42,7 +42,7 @@ Skyline Stack is a one-button arcade tower game:
 The game was built with **JetBrains Junie CLI**, JetBrains' coding agent, running **headless on a Linux arm64 machine** and signed in with a JetBrains Account on the free Junie Lite tier.
 
 1. **`.junie/guidelines.md` as the contract.** It holds the product brief, the hard rules (original IP only, no backend, no asset files, a pure deterministic `src/core/`), the module architecture, the booth requirements and the definition of done (`npm test` + `npm run build`). Junie loads it in every session.
-2. **Eight headless tasks plus a review** (`junie --task "TASK N …"`): scaffold + pure core + tests → playable game (input, audio, renderer, screens) → booth features (kiosk, events, duel, operator panel) → polish → bug fix → arcade-button initials → result-screen layout → then `junie --review` audited all of it, and a final task fixed the three issues the review found. In each one Junie read the code, planned, edited, ran the tests and the production build, and fixed its own failures before reporting.
+2. **Nine headless tasks plus a review** (`junie --task "TASK N …"`): scaffold + pure core + tests → playable game (input, audio, renderer, screens) → booth features (kiosk, events, duel, operator panel) → polish → bug fix → arcade-button initials → result-screen layout → then `junie --review` audited all of it, a task fixed the three issues the review found, and task 09 fixed a playtest bug (PERFECT x3 grow-back was capped at the base width, so it never grew): Junie wrote the regression tests first, watched them fail, fixed the cap and passed the build gate. In each one Junie read the code, planned, edited, ran the tests and the production build, and fixed its own failures before reporting.
 3. **Playtest-driven prompts.** Between tasks, the production build was played in headless Chromium using a `?test=1` state hook that Junie itself added. Screenshots and state logs became the next prompt, written as observed symptoms.
 4. **Evidence is in the repo.** Every prompt and Junie's verbatim transcript are in `.junie/sessions/`, and every Junie milestone is its own git commit.
 
@@ -77,7 +77,7 @@ Stack: TypeScript (strict), Vite, Vitest, HTML5 Canvas 2D, Web Audio API, Gamepa
 
 ## What we learned
 
-- Put invariants in agent guidelines and keep task prompts about the change. The rules never drifted across eight tasks.
+- Put invariants in agent guidelines and keep task prompts about the change. The rules never drifted across nine tasks.
 - Give the agent symptoms plus a request to verify, not line-level instructions. Fixes came out more general.
 - Determinism is what makes AI-written game code verifiable.
 - For booth games, the operator experience (idle reset, lockouts, per-event boards) matters as much as the gameplay.
