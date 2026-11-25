@@ -37,8 +37,8 @@ export function createBaseBlock(worldWidth = WORLD_WIDTH): Block {
   return { x: (worldWidth - width) / 2, width, direction: 1 };
 }
 
-export function createMovingBlock(width: number, direction: -1 | 1 = 1): Block {
-  return { x: 0, width, direction };
+export function createMovingBlock(width: number, direction: -1 | 1 = 1, worldWidth = WORLD_WIDTH): Block {
+  return { x: direction === 1 ? 0 : Math.max(0, worldWidth - width), width, direction };
 }
 
 /** Moves a block and reflects it at either world edge, including large time steps. */

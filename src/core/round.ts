@@ -96,7 +96,7 @@ export function pressRound(state: RoundState): RoundState {
   const nextState: RoundState = {
     ...state,
     blocks: [...state.blocks, result.block],
-    movingBlock: createMovingBlock(result.block.width),
+    movingBlock: createMovingBlock(result.block.width, floors % 2 === 0 ? 1 : -1),
     floors,
     combo: result.combo,
     perfectStreak: result.perfectStreak,

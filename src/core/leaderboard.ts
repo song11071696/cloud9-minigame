@@ -15,6 +15,17 @@ export interface StorageLike {
 
 export type EventLeaderboards = Record<string, LeaderboardEntry[]>;
 
+export function sanitizeEventKey(eventName: string | null | undefined): string {
+  const sanitized = (eventName ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+    .replace(/-+$/g, '');
+  return sanitized || 'default';
+}
+
 export function isValidInitials(initials: string): boolean {
   return /^[A-Z0-9]{3}$/.test(initials);
 }

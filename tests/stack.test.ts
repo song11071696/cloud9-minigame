@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { advanceBlock, createBaseBlock, dropBlock } from '../src/core/stack';
+import { createRound, pressRound, updateRound } from '../src/core/round';
 
 describe('stack mechanics', () => {
   const base = createBaseBlock();
 
   it('starts with a 60-unit block centred in a 100-unit world', () => {
     expect(base).toEqual({ x: 20, width: 60, direction: 1 });
+  });
+
+  it('alternates each new moving block from opposite sides', () => {
+    let round = updateRound(pressRound(createRound()), 3);
+    expect(round.movingBlock).toMatchObject({ x: 0, direction: 1 });
+    round = { ...round, movingBlock: { x: 20, width: 60, direction: 1 } };
+    round = pressRound(round);
+    expect(round.movingBlock).toMatchObject({ x: 40, direction: -1 });
+    round = { ...round, movingBlock: { x: 20, width: 60, direction: -1 } };
+    round = pressRound(round);
+    expect(round.movingBlock).toMatchObject({ x: 0, direction: 1 });
   });
 
   it('bounces a sliding block off world edges', () => {

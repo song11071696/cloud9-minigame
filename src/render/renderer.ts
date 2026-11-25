@@ -1,6 +1,7 @@
 import type { RoundSnapshot } from '../core/round';
 import type { Block, DebrisPiece } from '../core/stack';
 import type { LeaderboardEntry } from '../core/leaderboard';
+import type { DuelWinner } from '../core/duel';
 
 export type AppScreen = 'attract' | 'countdown' | 'play' | 'game-over' | 'initials' | 'leaderboard';
 
@@ -33,9 +34,17 @@ export interface RendererScene {
   leaderboard: readonly LeaderboardEntry[];
   leaderboardIndex: number;
   highlightedEntry: LeaderboardEntry | null;
+  todayBest: LeaderboardEntry | null;
+  eventName: string;
   initials: string;
   holdProgress: number;
   muted: boolean;
+  reducedMotion: boolean;
+  duelMode: boolean;
+  duelRounds: readonly [RoundSnapshot, RoundSnapshot] | null;
+  duelOut: readonly [boolean, boolean];
+  duelWinner: DuelWinner | null;
+  operator: { open: boolean; confirmClear: boolean; selected: number; version: string };
 }
 
 interface Palette {
@@ -45,15 +54,15 @@ interface Palette {
 }
 
 const PALETTES: readonly Palette[] = [
-  { top: '#34274f', bottom: '#ed8a74', glow: '#ffc394' },
-  { top: '#62435e', bottom: '#f0a2a3', glow: '#ffe0c0' },
-  { top: '#56769c', bottom: '#f5bc8b', glow: '#fff0bd' },
-  { top: '#3e729c', bottom: '#b3d9e8', glow: '#ecfbff' },
-  { top: '#23577e', bottom: '#86c6e2', glow: '#d9f5ff' },
-  { top: '#263b75', bottom: '#a4b9de', glow: '#f0f7ff' },
-  { top: '#171f4e', bottom: '#586eae', glow: '#cad8ff' },
-  { top: '#172d60', bottom: '#51b9bb', glow: '#d5ffe8' },
-  { top: '#483b83', bottom: '#f4c783', glow: '#fff4bd' },
+  { top: '#51345f', bottom: '#f57f55', glow: '#ffcf83' },
+  { top: '#523877', bottom: '#ff9b90', glow: '#ffe0a6' },
+  { top: '#354f91', bottom: '#ffbc68', glow: '#fff3a4' },
+  { top: '#2469a5', bottom: '#9ce7ff', glow: '#ecfdff' },
+  { top: '#15558c', bottom: '#63c9f5', glow: '#d4f7ff' },
+  { top: '#304e9e', bottom: '#afcfff', glow: '#effaff' },
+  { top: '#212963', bottom: '#718cff', glow: '#d5e0ff' },
+  { top: '#134c73', bottom: '#55e2ce', glow: '#d5fff2' },
+  { top: '#6a418a', bottom: '#ffc964', glow: '#fff5c3' },
 ];
 
 export class CanvasRenderer {
@@ -61,6 +70,7 @@ export class CanvasRenderer {
   private width = 1;
   private height = 1;
   private camera = 0;
+  private duelCameras: [number, number] = [0, 0];
   private lastDpr = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -85,36 +95,137 @@ export class CanvasRenderer {
     const contentWidth = this.width * 0.84;
     const contentLeft = this.width * 0.08;
     const ground = this.height * 0.89;
-    const targetCamera = Math.max(0, round.floors * blockHeight - this.height * 0.3);
-    this.camera += (targetCamera - this.camera) * (1 - Math.exp(-Math.max(0, dt) * 2.4));
-
     this.drawSky(palette, round.layer, scene.elapsed);
     this.drawClouds(scene.elapsed);
     if (round.layer >= 7) this.drawStars(scene.elapsed, palette.glow);
-
-    for (let index = 0; index < round.blocks.length; index += 1) {
-      const block = round.blocks[index]!;
-      this.drawBlock(block, index, contentLeft, contentWidth, ground, blockHeight, minSide);
+    if (scene.duelRounds) {
+      this.drawDuelTowers(scene, minSide, ground, blockHeight, dt);
+      this.drawDuelHud(scene, minSide);
+    } else {
+      const targetCamera = Math.max(0, round.floors * blockHeight - this.height * 0.3);
+      this.camera += (targetCamera - this.camera) * (1 - Math.exp(-Math.max(0, dt) * 2.4));
+      this.drawTower(round, scene, contentLeft, contentWidth, ground, blockHeight, minSide);
+      this.drawHud(round, scene, minSide);
     }
-    if (round.movingBlock && (scene.screen === 'play' || scene.screen === 'countdown' || scene.screen === 'attract')) {
-      this.drawBlock(
-        round.movingBlock,
-        round.floors + 1,
-        contentLeft,
-        contentWidth,
-        ground,
-        blockHeight,
-        minSide,
-        true,
-      );
-    }
-    this.drawDebris(scene.debris, contentLeft, contentWidth, ground, blockHeight);
-    this.drawHud(round, scene, minSide);
-    this.drawLayerPips(round, minSide);
+    if (scene.screen === 'play') this.drawLayerPips(round, minSide);
 
     if (scene.perfectAge >= 0 && scene.perfectAge < 1.15) this.drawPerfect(scene, minSide);
-    if (scene.layerFlash > 0) this.drawLayerBanner(round, scene, minSide);
+    if (!scene.reducedMotion && scene.layerFlash > 0) this.drawLayerBanner(round, scene, minSide);
     this.drawScreen(scene, minSide);
+    if (scene.operator.open) this.drawOperatorPanel(scene, minSide);
+  }
+
+  private drawTower(
+    round: RoundSnapshot,
+    scene: RendererScene,
+    left: number,
+    width: number,
+    ground: number,
+    blockHeight: number,
+    minSide: number,
+  ): void {
+    for (let index = 0; index < round.blocks.length; index += 1) {
+      this.drawBlock(round.blocks[index]!, index, left, width, ground, blockHeight, minSide);
+    }
+    if (round.movingBlock && ['play', 'countdown', 'attract'].includes(scene.screen)) {
+      const target = round.blocks[round.blocks.length - 1]!;
+      this.drawAlignmentGuide(target, round.floors, round.floors + 1, left, width, ground, blockHeight);
+      this.drawBlock(round.movingBlock, round.floors + 1, left, width, ground, blockHeight, minSide, true);
+    }
+    this.drawDebris(scene.debris, left, width, ground, blockHeight);
+  }
+
+  private drawAlignmentGuide(
+    target: Block,
+    targetFloor: number,
+    movingFloor: number,
+    left: number,
+    width: number,
+    ground: number,
+    blockHeight: number,
+  ): void {
+    const ctx = this.context;
+    const targetY = ground - targetFloor * blockHeight + this.camera;
+    const movingTop = ground - movingFloor * blockHeight + this.camera;
+    const edges = [target.x, target.x + target.width];
+    ctx.save();
+    ctx.strokeStyle = '#e7fbff';
+    ctx.globalAlpha = 0.38;
+    ctx.lineWidth = Math.max(2, blockHeight * 0.055);
+    ctx.setLineDash([Math.max(6, blockHeight * 0.2), Math.max(5, blockHeight * 0.16)]);
+    for (const edge of edges) {
+      const x = left + edge / 100 * width;
+      ctx.beginPath();
+      ctx.moveTo(x, movingTop);
+      ctx.lineTo(x, targetY);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  private drawDuelTowers(
+    scene: RendererScene,
+    minSide: number,
+    ground: number,
+    blockHeight: number,
+    dt: number,
+  ): void {
+    if (!scene.duelRounds) return;
+    const gap = this.width * 0.055;
+    const margin = this.width * 0.025;
+    const viewWidth = (this.width - gap - margin * 2) / 2;
+    const contentWidth = viewWidth * 0.88;
+    const ctx = this.context;
+    ctx.save();
+    ctx.strokeStyle = '#ffffff88';
+    ctx.lineWidth = Math.max(2, minSide * 0.003);
+    ctx.beginPath();
+    ctx.moveTo(this.width / 2, this.height * 0.12);
+    ctx.lineTo(this.width / 2, this.height * 0.88);
+    ctx.stroke();
+    ctx.restore();
+
+    scene.duelRounds.forEach((round, index) => {
+      const viewLeft = margin + index * (viewWidth + gap);
+      const left = viewLeft + (viewWidth - contentWidth) / 2;
+      const targetCamera = Math.max(0, round.floors * blockHeight - this.height * 0.3);
+      this.duelCameras[index] += (targetCamera - this.duelCameras[index]) * (1 - Math.exp(-Math.max(0, dt) * 2.4));
+      this.camera = this.duelCameras[index];
+      ctx.save();
+      if (scene.duelOut[index]) ctx.globalAlpha = 0.28;
+      for (let blockIndex = 0; blockIndex < round.blocks.length; blockIndex += 1) {
+        this.drawBlock(round.blocks[blockIndex]!, blockIndex, left, contentWidth, ground, blockHeight, minSide * 0.48);
+      }
+      if (round.movingBlock) {
+        const target = round.blocks[round.blocks.length - 1]!;
+        this.drawAlignmentGuide(target, round.floors, round.floors + 1, left, contentWidth, ground, blockHeight);
+        this.drawBlock(round.movingBlock, round.floors + 1, left, contentWidth, ground, blockHeight, minSide * 0.48, true);
+      }
+      ctx.restore();
+      if (scene.duelOut[index]) {
+        this.text(`P${index + 1} OUT`, viewLeft + viewWidth / 2, this.height * 0.58, Math.max(23, minSide * 0.055), 'center', '#d2d7e2');
+      }
+    });
+    this.camera = this.duelCameras[0];
+  }
+
+  private drawDuelHud(scene: RendererScene, minSide: number): void {
+    if (!scene.duelRounds) return;
+    const gap = this.width * 0.055;
+    const margin = this.width * 0.025;
+    const viewWidth = (this.width - gap - margin * 2) / 2;
+    const labelSize = Math.max(16, minSide * 0.04);
+    const scoreSize = Math.max(24, minSide * 0.058);
+    scene.duelRounds.forEach((round, index) => {
+      const center = margin + index * (viewWidth + gap) + viewWidth / 2;
+      this.text(`P${index + 1}  ·  ${round.score.toLocaleString()}`, center, this.height * 0.055, scoreSize, 'center');
+      this.text(`FLOORS ${round.floors}  ·  ${Math.ceil(round.timeRemaining)}s`, center, this.height * 0.105, labelSize, 'center');
+    });
+    if (scene.screen === 'play') {
+      this.text('A / S', this.width * 0.15, this.height * 0.19, Math.max(14, minSide * 0.025), 'center', '#e9f8ff');
+      this.text('L / K', this.width * 0.85, this.height * 0.19, Math.max(14, minSide * 0.025), 'center', '#e9f8ff');
+    }
   }
 
   private resize = (): void => {
@@ -224,14 +335,14 @@ export class CanvasRenderer {
     const slabWidth = block.width / 100 * width;
     const y = ground - floor * blockHeight + this.camera;
     if (y < -blockHeight * 2 || y > this.height + blockHeight) return;
-    const hue = (190 + floor * 19) % 360;
+    const hue = (20 + floor * 31) % 360;
     const radius = Math.max(3, minSide * 0.008);
     const sideDepth = Math.max(4, blockHeight * 0.16);
     const ctx = this.context;
     ctx.save();
     if (moving) ctx.shadowColor = `hsla(${hue},90%,75%,0.6)`;
     ctx.shadowBlur = moving ? minSide * 0.025 : minSide * 0.008;
-    ctx.fillStyle = `hsl(${hue} 72% 34%)`;
+    ctx.fillStyle = `hsl(${hue} 88% 31%)`;
     ctx.beginPath();
     ctx.moveTo(x + radius, y + blockHeight - sideDepth);
     ctx.lineTo(x + slabWidth - radius, y + blockHeight - sideDepth);
@@ -240,11 +351,11 @@ export class CanvasRenderer {
     ctx.closePath();
     ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = `hsl(${hue} 76% 53%)`;
+    ctx.fillStyle = `hsl(${hue} 86% 61%)`;
     this.roundRect(x, y, slabWidth, blockHeight - sideDepth, radius);
     ctx.fill();
-    ctx.fillStyle = `hsl(${hue} 87% 77% / 0.7)`;
-    ctx.fillRect(x + radius, y + 2, Math.max(0, slabWidth - radius * 2), Math.max(2, blockHeight * 0.09));
+    ctx.fillStyle = `hsl(${hue} 96% 91%)`;
+    ctx.fillRect(x + radius, y + 2, Math.max(0, slabWidth - radius * 2), Math.max(4, blockHeight * 0.18));
     ctx.restore();
   }
 
@@ -274,6 +385,7 @@ export class CanvasRenderer {
   }
 
   private drawHud(round: RoundSnapshot, scene: RendererScene, minSide: number): void {
+    if (scene.screen === 'attract') return;
     const ctx = this.context;
     const labelSize = Math.max(16, minSide * 0.04);
     const scoreSize = Math.max(27, minSide * 0.075);
@@ -292,13 +404,13 @@ export class CanvasRenderer {
     ctx.arc(centerX, centerY, radius, -Math.PI / 2, Math.PI * 1.5);
     ctx.stroke();
     ctx.strokeStyle = warning ? '#ff786f' : '#f7f5df';
-    if (warning) ctx.globalAlpha = 0.65 + (Math.sin(scene.elapsed * 9) + 1) * 0.17;
+    if (warning && !scene.reducedMotion) ctx.globalAlpha = 0.65 + (Math.sin(scene.elapsed * 9) + 1) * 0.17;
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
     ctx.stroke();
     ctx.globalAlpha = 1;
     this.text(`${Math.ceil(round.timeRemaining)}`, centerX, centerY + minSide * 0.015, labelSize * 1.15, 'center');
-    this.text(scene.muted ? 'SOUND OFF · M' : 'SOUND ON · M', this.width - 18, this.height - 18, Math.max(13, labelSize * 0.7), 'right');
+    this.text(scene.muted ? 'SOUND OFF · M' : 'SOUND ON · M', this.width - 18, this.height - 18, labelSize, 'right');
   }
 
   private drawLayerPips(round: RoundSnapshot, minSide: number): void {
@@ -353,31 +465,44 @@ export class CanvasRenderer {
     if (scene.screen === 'play') return;
 
     ctx.save();
-    ctx.fillStyle = scene.screen === 'attract' ? '#111a3470' : '#111a34bd';
+    ctx.fillStyle = scene.screen === 'attract' ? '#111a3450' : '#111a34bd';
     ctx.fillRect(0, 0, this.width, this.height);
 
     if (scene.screen === 'attract') {
+      this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, this.height * 0.065, Math.max(13, minSide * 0.025), 'center', '#e7f5ff');
+      this.text('DEMO', this.width * 0.93, this.height * 0.12, Math.max(14, minSide * 0.03), 'center', '#ffe8a6');
       this.text('SKYLINE STACK', centerX, centerY - minSide * 0.12, big, 'center', '#fff8e4');
       this.text('Stack to Cloud Nine', centerX, centerY - minSide * 0.02, medium, 'center', '#d2f3ff');
-      const blink = Math.sin(scene.elapsed * 3.2) > -0.15;
+      const blink = scene.reducedMotion || Math.sin(scene.elapsed * 3.2) > -0.15;
       if (blink) this.text('TAP / PRESS ANY BUTTON', centerX, centerY + minSide * 0.1, medium, 'center', '#ffe8a6');
-      this.text('60 SECONDS · ONE BUTTON · NINE LAYERS', centerX, this.height * 0.91, Math.max(13, medium * 0.62), 'center', '#ffffff');
+      this.text(scene.duelMode ? 'DUEL MODE · P1 LEFT / P2 RIGHT' : '60 SECONDS · ONE BUTTON · NINE LAYERS', centerX, this.height * 0.84, Math.max(13, medium * 0.62), 'center', '#ffffff');
       this.drawLeaderboard(scene, minSide, centerY + minSide * 0.24, false);
+      if (scene.todayBest) {
+        this.text(`TODAY'S BEST  ${scene.todayBest.initials} · ${scene.todayBest.score.toLocaleString()}`, centerX, centerY + minSide * 0.31, Math.max(14, minSide * 0.031), 'center', '#ffe8a6');
+      }
     } else if (scene.screen === 'countdown') {
       const countdown = Math.max(1, Math.ceil(scene.round.countdownRemaining));
       this.text(countdown.toString(), centerX, centerY + big * 0.35, big * 2.2, 'center', '#fff5ce');
       this.text('GET READY', centerX, centerY + big * 1.25, medium, 'center');
+      this.text('TAP when the block lines up · PERFECT drops grow it back', centerX, this.height * 0.79, Math.max(14, minSide * 0.035), 'center', '#fff2bd');
     } else if (scene.screen === 'game-over') {
-      this.text('TOWER COMPLETE', centerX, centerY - minSide * 0.29, big * 0.75, 'center', '#fff5ce');
-      const reason = scene.round.endReason === 'missed' ? 'THE BLOCK SLIPPED AWAY' : 'TIME IS UP';
-      this.text(reason, centerX, centerY - minSide * 0.21, medium, 'center', '#d8edff');
-      this.text(`SCORE  ${scene.round.score.toLocaleString()}`, centerX, centerY - minSide * 0.11, big, 'center');
-      const rows = [
-        `FLOORS  ${scene.breakdown.floors}  ·  PERFECTS  ${scene.breakdown.perfects}  +${scene.breakdown.perfectBonus}`,
-        `LAYERS  ${scene.breakdown.layers}  +${scene.breakdown.layerBonus}  ·  TIME  +${scene.breakdown.timeBonus}`,
-        ...(scene.breakdown.summitBonus > 0 ? [`CLOUD NINE BONUS  +${scene.breakdown.summitBonus}`] : []),
-      ];
-      rows.forEach((row, index) => this.text(row, centerX, centerY + minSide * (index * 0.065), Math.max(15, medium * 0.78), 'center'));
+      if (scene.duelRounds && scene.duelWinner) {
+        const winnerText = scene.duelWinner === 'DRAW' ? 'DRAW' : `${scene.duelWinner} WINS`;
+        this.text(winnerText, centerX, centerY - minSide * 0.15, big * 1.05, 'center', '#fff2ac');
+        this.text(`P1  ${scene.duelRounds[0].score.toLocaleString()}   ·   P2  ${scene.duelRounds[1].score.toLocaleString()}`, centerX, centerY - minSide * 0.015, medium, 'center');
+        this.text('DUEL COMPLETE', centerX, centerY + minSide * 0.09, medium * 0.8, 'center', '#d8edff');
+      } else {
+        this.text('TOWER COMPLETE', centerX, centerY - minSide * 0.29, big * 0.75, 'center', '#fff5ce');
+        const reason = scene.round.endReason === 'missed' ? 'THE BLOCK SLIPPED AWAY' : 'TIME IS UP';
+        this.text(reason, centerX, centerY - minSide * 0.21, medium, 'center', '#d8edff');
+        this.text(`SCORE  ${scene.round.score.toLocaleString()}`, centerX, centerY - minSide * 0.11, big, 'center');
+        const rows = [
+          `FLOORS  ${scene.breakdown.floors}  ·  PERFECTS  ${scene.breakdown.perfects}  +${scene.breakdown.perfectBonus}`,
+          `LAYERS  ${scene.breakdown.layers}  +${scene.breakdown.layerBonus}  ·  TIME  +${scene.breakdown.timeBonus}`,
+          ...(scene.breakdown.summitBonus > 0 ? [`CLOUD NINE BONUS  +${scene.breakdown.summitBonus}`] : []),
+        ];
+        rows.forEach((row, index) => this.text(row, centerX, centerY + minSide * (index * 0.065), Math.max(15, medium * 0.78), 'center'));
+      }
       this.text('PRESS TO CONTINUE', centerX, centerY + minSide * 0.23, medium * 0.8, 'center', '#ffe8a6');
     } else if (scene.screen === 'initials') {
       this.text('NEW HIGH SCORE', centerX, centerY - minSide * 0.15, big * 0.82, 'center', '#fff2ac');
@@ -391,9 +516,42 @@ export class CanvasRenderer {
       this.text('HOLD 0.6s: CONFIRM  ·  TYPE 3 LETTERS', centerX, centerY + minSide * 0.24, Math.max(14, medium * 0.68), 'center');
     } else if (scene.screen === 'leaderboard') {
       this.text('SKYLINE HALL OF HEIGHT', centerX, centerY - minSide * 0.31, big * 0.76, 'center', '#fff2ac');
-      this.drawLeaderboard(scene, minSide, centerY - minSide * 0.22, true);
+      this.text(`EVENT · ${scene.eventName.toUpperCase()}`, centerX, centerY - minSide * 0.25, Math.max(13, minSide * 0.024), 'center', '#e7f5ff');
+      this.drawLeaderboard(scene, minSide, centerY - minSide * 0.19, true);
       this.text('PRESS TO PLAY AGAIN', centerX, this.height - minSide * 0.12, medium * 0.82, 'center', '#ffe8a6');
     }
+    ctx.restore();
+  }
+
+  private drawOperatorPanel(scene: RendererScene, minSide: number): void {
+    const ctx = this.context;
+    const centerX = this.width / 2;
+    const rowHeight = this.height * 0.085;
+    const rowTop = this.height * 0.39;
+    const rowGap = this.height * 0.105;
+    const panelWidth = this.width * 0.82;
+    ctx.save();
+    ctx.fillStyle = '#071126eF';
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.fillStyle = '#192c50';
+    ctx.beginPath();
+    ctx.roundRect(centerX - panelWidth / 2, this.height * 0.13, panelWidth, this.height * 0.74, Math.max(10, minSide * 0.025));
+    ctx.fill();
+    this.text('OPERATOR PANEL', centerX, this.height * 0.22, Math.max(28, minSide * 0.075), 'center', '#fff2ac');
+    this.text(`EVENT · ${scene.eventName.toUpperCase()}  ·  BUILD ${scene.operator.version}`, centerX, this.height * 0.31, Math.max(14, minSide * 0.029), 'center', '#e4f6ff');
+    const labels = [
+      scene.operator.confirmClear ? '[1] CLEAR BOARD — PRESS AGAIN TO CONFIRM' : '[1] CLEAR THIS EVENT LEADERBOARD',
+      `[2] SOUND: ${scene.muted ? 'OFF — TURN ON' : 'ON — TURN OFF'}`,
+      `[3] DUEL DEFAULT: ${scene.duelMode ? 'ON — TURN OFF' : 'OFF — TURN ON'}`,
+      '[4] CLOSE',
+    ];
+    labels.forEach((label, index) => {
+      const y = rowTop + index * rowGap;
+      ctx.fillStyle = scene.operator.selected === index ? '#31547b' : '#233b60';
+      ctx.fillRect(centerX - panelWidth * 0.43, y - rowHeight / 2, panelWidth * 0.86, rowHeight);
+      this.text(label, centerX, y, Math.max(16, minSide * 0.034), 'center', '#ffffff');
+    });
+    this.text('TOUCH A BUTTON · ↑/↓ + ENTER · 1–4 · ESC', centerX, this.height * 0.81, Math.max(13, minSide * 0.025), 'center', '#d7eaff');
     ctx.restore();
   }
 

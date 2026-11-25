@@ -4,6 +4,7 @@ import {
   isValidInitials,
   Leaderboard,
   serializeLeaderboards,
+  sanitizeEventKey,
   type StorageLike,
 } from '../src/core/leaderboard';
 
@@ -24,6 +25,12 @@ class MemoryStorage implements StorageLike {
 }
 
 describe('leaderboard', () => {
+  it('sanitizes event names for stable, bounded storage keys', () => {
+    expect(sanitizeEventKey(' Friday Finals 2026! ')).toBe('friday-finals-2026');
+    expect(sanitizeEventKey('A'.repeat(30))).toBe('a'.repeat(24));
+    expect(sanitizeEventKey('!!!')).toBe('default');
+    expect(sanitizeEventKey('My_event/Day')).toBe('my-event-day');
+  });
   it('validates initials, sorts by score and earlier timestamp, and keeps top ten per event', () => {
     const storage = new MemoryStorage();
     const leaderboard = new Leaderboard(storage);

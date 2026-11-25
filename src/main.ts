@@ -1,6 +1,8 @@
 import { createDemoBot, updateDemoBot, type DemoBotState } from './core/attract';
 import { createInitialsState, holdInitials, tapInitials, typeInitialKey, type InitialsState } from './core/initials';
-import { Leaderboard, type LeaderboardEntry, type StorageLike } from './core/leaderboard';
+import { Leaderboard, sanitizeEventKey, type LeaderboardEntry, type StorageLike } from './core/leaderboard';
+import { getDuelOutcome, type DuelWinner } from './core/duel';
+import { shouldReturnToAttract } from './core/kiosk';
 import { nextRandom } from './core/rng';
 import {
   createRound,
@@ -14,14 +16,19 @@ import { dropBlock, WORLD_WIDTH } from './core/stack';
 import { SynthAudio } from './audio/synth';
 import { createInput, type InputController, type PressEvent } from './input/input';
 import { CanvasRenderer, type AppScreen, type DebrisAnimation, type RendererScene } from './render/renderer';
+import packageInfo from '../package.json';
 
-const canvas = document.querySelector<HTMLCanvasElement>('#game');
-if (!canvas) throw new Error('The game canvas is missing.');
+const canvasElement = document.querySelector<HTMLCanvasElement>('#game');
+if (!canvasElement) throw new Error('The game canvas is missing.');
+const canvas: HTMLCanvasElement = canvasElement;
 
 const params = new URLSearchParams(window.location.search);
 const parsedSeed = params.has('seed') ? Number(params.get('seed')) : null;
 const fixedSeed = parsedSeed !== null && Number.isFinite(parsedSeed) ? parsedSeed >>> 0 : null;
-const eventKey = params.get('event')?.trim() || 'default';
+const eventKey = sanitizeEventKey(params.get('event'));
+const eventName = eventKey;
+const kioskMode = params.get('kiosk') === '1';
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 let seedCursor = fixedSeed ?? (Date.now() >>> 0);
 
 function nextRoundSeed(): number {
@@ -66,6 +73,10 @@ const INITIAL_HOLD_SECONDS = 0.6;
 
 let screen: AppScreen = 'attract';
 let round: RoundState = createRound(nextRoundSeed());
+let duelRound: RoundState = createRound(round.seed);
+let duelEnabled = params.get('duel') === '1';
+let duelSession = false;
+let duelWinner: DuelWinner | null = null;
 let demoRound = pressRound(createRound(nextRoundSeed()));
 let demoBot: DemoBotState = createDemoBot(nextRoundSeed());
 let demoResetTimer = 0;
@@ -84,6 +95,15 @@ let holdProgress = 0;
 let highlightedEntry: LeaderboardEntry | null = null;
 let candidateEntry: LeaderboardEntry | null = null;
 let ignoreNextKeyboardPress = false;
+let operatorOpen = false;
+let operatorConfirmClear = false;
+let operatorSelected = 0;
+let operatorKeyStarted = 0;
+let operatorPointerStarted = 0;
+let kioskIdleSeconds = 0;
+let inputActivity = false;
+let wakeLock: { release: () => Promise<void> } | null = null;
+let kioskGestureStarted = false;
 
 function getEntries(): LeaderboardEntry[] {
   return board.get(eventKey);
@@ -95,7 +115,11 @@ function isHighScore(score: number): boolean {
 }
 
 function beginRound(): void {
-  round = pressRound(createRound(nextRoundSeed()));
+  const seed = nextRoundSeed();
+  round = pressRound(createRound(seed));
+  duelRound = pressRound(createRound(seed));
+  duelSession = duelEnabled;
+  duelWinner = null;
   screen = 'countdown';
   screenElapsed = 0;
   previousCountdown = 3;
@@ -107,11 +131,17 @@ function beginRound(): void {
   debris = [];
   candidateEntry = null;
   highlightedEntry = null;
+  kioskIdleSeconds = 0;
   audio.countdown(3);
 }
 
 function enterResults(): void {
   screenElapsed = 0;
+  if (duelSession) {
+    duelSession = false;
+    screen = 'attract';
+    return;
+  }
   if (candidateEntry) {
     initials = createInitialsState();
     screen = 'initials';
@@ -157,61 +187,174 @@ function updateInitialsGesture(now: number, holds: readonly [boolean, boolean]):
   }
 }
 
+function noteActivity(): void {
+  inputActivity = true;
+  kioskIdleSeconds = 0;
+  activateGesture();
+}
+
+async function acquireWakeLock(): Promise<void> {
+  if (!kioskMode || wakeLock) return;
+  const wakeLockNavigator = navigator as Navigator & {
+    wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+  };
+  if (!wakeLockNavigator.wakeLock) return;
+  try {
+    wakeLock = await wakeLockNavigator.wakeLock.request('screen');
+  } catch {
+    wakeLock = null;
+  }
+}
+
+function activateGesture(): void {
+  audio.unlock();
+  if (!kioskMode || kioskGestureStarted) return;
+  kioskGestureStarted = true;
+  const fullscreen = canvas.requestFullscreen?.();
+  if (fullscreen) void fullscreen.catch(() => undefined);
+  void acquireWakeLock();
+}
+
+function openOperatorPanel(): void {
+  operatorOpen = true;
+  operatorConfirmClear = false;
+}
+
+function activateOperator(index: number): void {
+  operatorSelected = index;
+  if (index === 0) {
+    if (operatorConfirmClear) {
+      board.clear(eventKey);
+      highlightedEntry = null;
+      operatorConfirmClear = false;
+    } else {
+      operatorConfirmClear = true;
+    }
+  } else if (index === 1) {
+    operatorConfirmClear = false;
+    audio.toggleMute();
+  } else if (index === 2) {
+    operatorConfirmClear = false;
+    duelEnabled = !duelEnabled;
+  } else {
+    operatorOpen = false;
+    operatorConfirmClear = false;
+  }
+}
+
+function handleOperatorKey(key: string): void {
+  const normalized = key.toLowerCase();
+  if (normalized === 'escape') {
+    operatorOpen = false;
+    operatorConfirmClear = false;
+  } else if (normalized === 'arrowup' || normalized === 'arrowdown') {
+    const direction = normalized === 'arrowup' ? -1 : 1;
+    operatorSelected = (operatorSelected + direction + 4) % 4;
+  } else if (normalized === 'enter' || normalized === ' ' || normalized === 'space') {
+    activateOperator(operatorSelected);
+  } else if (/^[1-4]$/.test(normalized)) {
+    activateOperator(Number(normalized) - 1);
+  }
+}
+
+function handleOperatorPointer(event: PressEvent): void {
+  if (event.source !== 'pointer' || event.y === undefined) return;
+  const bounds = canvas.getBoundingClientRect();
+  const rowTop = bounds.height * 0.39;
+  const rowGap = bounds.height * 0.105;
+  const rowHeight = bounds.height * 0.085;
+  for (let index = 0; index < 4; index += 1) {
+    const center = rowTop + index * rowGap;
+    if (Math.abs(event.y - center) <= rowHeight / 2) {
+      activateOperator(index);
+      return;
+    }
+  }
+}
+
+function dropForPlayer(player: 0 | 1): void {
+  const activeRound = player === 0 ? round : duelRound;
+  if (activeRound.phase !== 'playing' || !activeRound.movingBlock) return;
+  const moving = activeRound.movingBlock;
+  const target = activeRound.blocks[activeRound.blocks.length - 1]!;
+  const result = dropBlock(moving, target, activeRound.perfectStreak, { worldWidth: WORLD_WIDTH });
+  const updated = pressRound(activeRound);
+  if (player === 0) round = updated;
+  else duelRound = updated;
+  audio.drop();
+  if (result.chopped.length > 0) audio.chop();
+  if (!result.landed || !result.block) return;
+  if (result.chopped.length > 0) {
+    debris.push(...result.chopped.map((piece) => ({ piece, floor: updated.floors, age: 0 })));
+  }
+  if (result.perfect) {
+    perfects += 1;
+    perfectText = `P${player + 1} PERFECT x${updated.combo}`;
+    perfectAge = 0;
+    audio.perfect(updated.combo);
+  } else {
+    perfectAge = -1;
+  }
+  if (updated.layerBreaks > activeRound.layerBreaks && !reducedMotion) {
+    layerFlash = 0.8;
+    audio.layerBreak(getRoundSnapshot(updated).layer);
+  }
+}
+
 function onInput(event: PressEvent): void {
   if (event.source === 'keyboard' && ignoreNextKeyboardPress) {
     ignoreNextKeyboardPress = false;
     return;
   }
-  if (event.player !== 0) return;
+  if (operatorOpen) {
+    handleOperatorPointer(event);
+    return;
+  }
   if (screen === 'attract') {
     beginRound();
     return;
   }
   if (screen === 'play') {
-    const moving = round.movingBlock;
-    if (!moving) return;
-    const target = round.blocks[round.blocks.length - 1]!;
-    const result = dropBlock(moving, target, round.perfectStreak, { worldWidth: WORLD_WIDTH });
-    round = pressRound(round);
-    if (round.phase === 'over') {
-      audio.drop();
-      if (result.chopped.length > 0) audio.chop();
-      return;
-    }
-    audio.drop();
-    if (result.chopped.length > 0) {
-      audio.chop();
-      debris.push(...result.chopped.map((piece) => ({ piece, floor: round.floors, age: 0 })));
-    }
-    if (result.perfect) {
-      perfects += 1;
-      perfectText = `PERFECT x${round.combo}`;
-      perfectAge = 0;
-      audio.perfect(round.combo);
-    } else {
-      perfectAge = -1;
-    }
-    if (round.layerBreaks > 0 && round.floors % 6 === 0) {
-      layerFlash = 0.8;
-      audio.layerBreak(getRoundSnapshot(round).layer);
-    }
+    if (event.player === 1 && !duelSession) return;
+    dropForPlayer(event.player);
     return;
   }
   if (screen === 'game-over') {
+    if (duelSession) {
+      duelSession = false;
+      screen = 'attract';
+      screenElapsed = 0;
+      return;
+    }
     enterResults();
     return;
   }
   if (screen === 'leaderboard') {
+    if (event.player !== 0) return;
     screen = 'attract';
     screenElapsed = 0;
     return;
   }
-  if (screen === 'initials' && event.source !== 'keyboard') {
+  if (screen === 'initials' && event.player === 0 && event.source !== 'keyboard') {
     initialsGesture = { started: performance.now(), player: event.player };
   }
 }
 
 function onKey(key: string): void {
+  const normalized = key.toLowerCase();
+  if (operatorOpen) {
+    ignoreNextKeyboardPress = [' ', 'space', 'spacebar', 'enter', 'arrowup', 'arrowdown'].includes(normalized);
+    handleOperatorKey(key);
+    return;
+  }
+  if (normalized === 'o') {
+    operatorKeyStarted = performance.now();
+    return;
+  }
+  if (normalized === 'd' && screen === 'attract') {
+    duelEnabled = !duelEnabled;
+    return;
+  }
   if (key.toLowerCase() === 'm') {
     audio.toggleMute();
     return;
@@ -225,12 +368,56 @@ function onKey(key: string): void {
   }
 }
 
+const onCornerPointerDown = (event: PointerEvent): void => {
+  const bounds = canvas.getBoundingClientRect();
+  const x = event.clientX - bounds.left;
+  const y = event.clientY - bounds.top;
+  if (x >= 80 || y >= 80) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  operatorPointerStarted = performance.now();
+  noteActivity();
+};
+
+canvas.addEventListener('pointerdown', onCornerPointerDown, true);
+window.addEventListener('pointerup', () => { operatorPointerStarted = 0; });
+window.addEventListener('pointercancel', () => { operatorPointerStarted = 0; });
+window.addEventListener('keyup', (event) => {
+  if (event.key.toLowerCase() === 'o') operatorKeyStarted = 0;
+});
+
 const input: InputController = createInput(canvas, {
-  isDuel: () => false,
+  isDuel: () => duelEnabled || duelSession,
   onPress: onInput,
   onKey,
-  onGesture: () => audio.unlock(),
+  onGesture: activateGesture,
+  onActivity: noteActivity,
 });
+
+if (kioskMode) {
+  document.documentElement.classList.add('kiosk');
+  const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+  if (viewport) viewport.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+  const preventDefault = (event: Event): void => event.preventDefault();
+  document.addEventListener('contextmenu', preventDefault);
+  document.addEventListener('selectstart', preventDefault);
+  document.addEventListener('gesturestart', preventDefault, { passive: false });
+  document.addEventListener('touchmove', (event: TouchEvent) => {
+    if (event.touches.length > 1) event.preventDefault();
+  }, { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (event: TouchEvent) => {
+    const now = performance.now();
+    if (now - lastTouchEnd < 320) event.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+  window.addEventListener('wheel', (event: WheelEvent) => {
+    if (event.ctrlKey) event.preventDefault();
+  }, { passive: false });
+  window.addEventListener('keydown', (event: KeyboardEvent) => {
+    if ((event.ctrlKey || event.metaKey) && ['+', '-', '=', '0'].includes(event.key)) event.preventDefault();
+  }, true);
+}
 
 function updateDemo(dt: number): void {
   if (demoRound.phase === 'over') {
@@ -253,7 +440,9 @@ function updateDemo(dt: number): void {
 function updateRoundState(dt: number): void {
   if (screen !== 'countdown' && screen !== 'play') return;
   const oldPhase = round.phase;
+  const oldDuelPhase = duelRound.phase;
   round = updateRound(round, dt);
+  if (duelSession) duelRound = updateRound(duelRound, dt);
   if (oldPhase === 'countdown' && round.phase === 'countdown') {
     const countdown = Math.ceil(3 - round.phaseElapsed);
     if (countdown < previousCountdown && countdown >= 1) audio.countdown(countdown);
@@ -263,14 +452,30 @@ function updateRoundState(dt: number): void {
     screen = 'play';
     audio.countdown(0);
   }
-  if (oldPhase === 'playing' && round.phase === 'playing') {
-    const remaining = Math.ceil(round.timeRemaining);
+  const timerRound = duelSession && round.phase === 'over' ? duelRound : round;
+  const timerWasPlaying = duelSession && round.phase === 'over' ? oldDuelPhase === 'playing' : oldPhase === 'playing';
+  if (timerWasPlaying && timerRound.phase === 'playing') {
+    const remaining = Math.ceil(timerRound.timeRemaining);
     if (remaining < previousWarningSecond && remaining <= 10 && remaining > 0) audio.warning();
     previousWarningSecond = remaining;
   }
-  if (round.phase === 'over') {
+  if (duelSession) {
+    const outcome = getDuelOutcome(
+      [round.score, duelRound.score],
+      [round.endReason === 'missed', duelRound.endReason === 'missed'],
+      [round.phase === 'over', duelRound.phase === 'over'],
+    );
+    if (outcome.complete) {
+      duelWinner = outcome.winner;
+      screen = 'game-over';
+      screenElapsed = 0;
+      kioskIdleSeconds = 0;
+      audio.gameOver();
+    }
+  } else if (round.phase === 'over' && oldPhase !== 'over') {
     screen = 'game-over';
     screenElapsed = 0;
+    kioskIdleSeconds = 0;
     audio.gameOver();
     if (isHighScore(round.score)) candidateEntry = { initials: 'AAA', score: round.score, timestamp: Date.now() };
   }
@@ -289,7 +494,21 @@ function update(dt: number): void {
     screen = 'attract';
     screenElapsed = 0;
   }
-  const currentRound = screen === 'attract' ? demoRound : round;
+  if (kioskMode) {
+    if (inputActivity) kioskIdleSeconds = 0;
+    else if (screen === 'play') kioskIdleSeconds = 0;
+    else kioskIdleSeconds += dt;
+    inputActivity = false;
+    if (shouldReturnToAttract(screen, kioskIdleSeconds)) {
+      screen = 'attract';
+      screenElapsed = 0;
+      duelSession = false;
+      duelWinner = null;
+      candidateEntry = null;
+      kioskIdleSeconds = 0;
+    }
+  }
+  const currentRound = screen === 'attract' ? demoRound : duelSession && round.phase === 'over' ? duelRound : round;
   audio.update(dt, getRoundSnapshot(currentRound).layer, screen === 'attract' || screen === 'countdown' || screen === 'play');
 }
 
@@ -322,9 +541,17 @@ function render(dt: number): void {
     leaderboard: entries,
     leaderboardIndex: entries.length ? Math.floor(elapsed / 8) % entries.length : 0,
     highlightedEntry,
+    todayBest: entries[0] ?? null,
+    eventName,
     initials: initials.value,
     holdProgress,
     muted: audio.isMuted,
+    reducedMotion,
+    duelMode: duelEnabled,
+    duelRounds: duelSession ? [getRoundSnapshot(round), getRoundSnapshot(duelRound)] : null,
+    duelOut: [round.endReason === 'missed', duelRound.endReason === 'missed'],
+    duelWinner,
+    operator: { open: operatorOpen, confirmClear: operatorConfirmClear, selected: operatorSelected, version: packageInfo.version },
   };
   renderer.render(scene, dt);
 }
@@ -344,6 +571,15 @@ function frame(timestamp: number): void {
   if (lastFrame === 0) lastFrame = now;
   const delta = Math.min(0.25, Math.max(0, now - lastFrame));
   lastFrame = now;
+  const holdNow = performance.now();
+  if (operatorKeyStarted > 0 && holdNow - operatorKeyStarted >= 3000) {
+    operatorKeyStarted = 0;
+    openOperatorPanel();
+  }
+  if (operatorPointerStarted > 0 && holdNow - operatorPointerStarted >= 3000) {
+    operatorPointerStarted = 0;
+    openOperatorPanel();
+  }
   accumulator += delta;
   let steps = 0;
   while (accumulator >= STEP && steps < 30) {
@@ -360,6 +596,12 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     lastFrame = 0;
     accumulator = 0;
+    if (wakeLock) {
+      void wakeLock.release().catch(() => undefined);
+      wakeLock = null;
+    }
+  } else if (kioskMode) {
+    void acquireWakeLock();
   }
 });
 

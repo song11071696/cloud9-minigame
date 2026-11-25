@@ -5,6 +5,8 @@ export interface PressEvent {
   player: PlayerIndex;
   source: 'keyboard' | 'pointer' | 'gamepad';
   key?: string;
+  x?: number;
+  y?: number;
 }
 
 export interface InputOptions {
@@ -12,6 +14,7 @@ export interface InputOptions {
   onPress: (event: PressEvent) => void;
   onKey?: (key: string) => void;
   onGesture?: () => void;
+  onActivity?: () => void;
 }
 
 export interface InputController {
@@ -37,16 +40,23 @@ export function createInput(canvas: HTMLCanvasElement, options: InputOptions): I
     options.onGesture?.();
   };
 
-  const emit = (player: PlayerIndex, source: PressEvent['source'], key?: string): void => {
+  const emit = (player: PlayerIndex, source: PressEvent['source'], key?: string, x?: number, y?: number): void => {
     const now = performance.now();
     if (now - lastPress[player] < DEBOUNCE_MS) return;
     lastPress[player] = now;
-    options.onPress({ type: 'press', player, source, ...(key ? { key } : {}) });
+    options.onPress({
+      type: 'press', player, source,
+      ...(key ? { key } : {}),
+      ...(x === undefined ? {} : { x }),
+      ...(y === undefined ? {} : { y }),
+    });
   };
 
   const keydown = (event: KeyboardEvent): void => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const token = event.key.toLowerCase();
+    options.onActivity?.();
+    signalGesture();
     if (heldKeys.has(token)) return;
     heldKeys.add(token);
     options.onKey?.(event.key);
@@ -65,7 +75,9 @@ export function createInput(canvas: HTMLCanvasElement, options: InputOptions): I
   };
 
   const pointerdown = (event: PointerEvent): void => {
+    options.onActivity?.();
     const bounds = canvas.getBoundingClientRect();
+    signalGesture();
     const player = routePress({
       source: 'pointer',
       x: event.clientX - bounds.left,
@@ -80,7 +92,7 @@ export function createInput(canvas: HTMLCanvasElement, options: InputOptions): I
       // Capture is unavailable for some synthetic and browser-generated events.
     }
     signalGesture();
-    emit(player, 'pointer');
+    emit(player, 'pointer', undefined, event.clientX - bounds.left, event.clientY - bounds.top);
   };
 
   const pointerup = (event: PointerEvent): void => {
@@ -112,6 +124,10 @@ export function createInput(canvas: HTMLCanvasElement, options: InputOptions): I
         const down = pad.buttons
           .map((button, buttonIndex) => button.pressed ? buttonIndex : -1)
           .filter((buttonIndex) => buttonIndex >= 0);
+        if (down.length > 0) {
+          options.onActivity?.();
+          signalGesture();
+        }
         const player = routePress({ source: 'gamepad', index, buttons: down }, options.isDuel());
         if (player === null) continue;
         currentlyHeld[player] = true;
