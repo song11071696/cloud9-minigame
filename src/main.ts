@@ -2,9 +2,10 @@ import { createDemoBot, updateDemoBot, type DemoBotState } from './core/attract'
 import { createInitialsState, holdInitials, tapInitials, typeInitialKey, type InitialsState } from './core/initials';
 import { Leaderboard, sanitizeEventKey, type LeaderboardEntry, type StorageLike } from './core/leaderboard';
 import { getDuelOutcome, type DuelWinner } from './core/duel';
+import { enteredScreen, nextScreen, type AppScreen, type ScreenFlowAction } from './core/flow';
 import { shouldReturnToAttract } from './core/kiosk';
 import { nextRandom } from './core/rng';
-import { getScreenLockoutProgress, isScreenInputLocked } from './core/screen-lockout';
+import { getScreenLockoutProgress, SCREEN_INPUT_LOCKOUT_SECONDS } from './core/screen-lockout';
 import {
   createRound,
   getRoundSnapshot,
@@ -16,7 +17,7 @@ import {
 import { dropBlock, WORLD_WIDTH } from './core/stack';
 import { SynthAudio } from './audio/synth';
 import { createInput, type InputController, type PressEvent } from './input/input';
-import { CanvasRenderer, type AppScreen, type DebrisAnimation, type RendererScene } from './render/renderer';
+import { CanvasRenderer, type DebrisAnimation, type RendererScene } from './render/renderer';
 import packageInfo from '../package.json';
 
 const canvasElement = document.querySelector<HTMLCanvasElement>('#game');
@@ -122,8 +123,7 @@ function beginRound(): void {
   duelRound = pressRound(createRound(seed));
   duelSession = duelEnabled;
   duelWinner = null;
-  screen = 'countdown';
-  screenElapsed = 0;
+  applyScreenFlow('start');
   previousCountdown = 3;
   previousWarningSecond = ROUND_SECONDS;
   perfects = 0;
@@ -138,23 +138,9 @@ function beginRound(): void {
   audio.countdown(3);
 }
 
-function enterResults(): void {
-  screenElapsed = 0;
-  if (candidateEntry) {
-    initials = createInitialsState();
-    screen = 'initials';
-    audio.highScore();
-  } else {
-    screen = 'leaderboard';
-  }
-}
-
 function returnToAttract(): void {
-  screen = 'attract';
-  screenElapsed = 0;
-  duelSession = false;
-  duelWinner = null;
-  candidateEntry = null;
+  applyScreenFlow('return');
+  kioskIdleSeconds = 0;
 }
 
 function saveInitials(): void {
@@ -167,8 +153,7 @@ function saveInitials(): void {
   board.add(eventKey, entry);
   highlightedEntry = entry;
   candidateEntry = entry;
-  screen = 'leaderboard';
-  screenElapsed = 0;
+  applyScreenFlow('initials-complete');
 }
 
 function updateInitialsGesture(now: number, holds: readonly [boolean, boolean]): void {
@@ -330,17 +315,12 @@ function onInput(event: PressEvent): void {
     return;
   }
   if (screen === 'game-over') {
-    if (isScreenInputLocked(screenElapsed)) return;
-    if (duelSession) {
-      returnToAttract();
-      return;
-    }
-    enterResults();
+    applyScreenFlow('advance');
     return;
   }
   if (screen === 'leaderboard') {
-    if (event.player !== 0 || isScreenInputLocked(screenElapsed)) return;
-    returnToAttract();
+    if (event.player !== 0) return;
+    applyScreenFlow('advance');
     return;
   }
   if (screen === 'initials' && event.player === 0 && event.source !== 'keyboard') {
@@ -456,10 +436,6 @@ function updateRoundState(dt: number): void {
     if (countdown < previousCountdown && countdown >= 1) audio.countdown(countdown);
     previousCountdown = countdown;
   }
-  if (oldPhase === 'countdown' && round.phase === 'playing') {
-    screen = 'play';
-    audio.countdown(0);
-  }
   const timerRound = duelSession && round.phase === 'over' ? duelRound : round;
   const timerWasPlaying = duelSession && round.phase === 'over' ? oldDuelPhase === 'playing' : oldPhase === 'playing';
   if (timerWasPlaying && timerRound.phase === 'playing') {
@@ -467,26 +443,53 @@ function updateRoundState(dt: number): void {
     if (remaining < previousWarningSecond && remaining <= 10 && remaining > 0) audio.warning();
     previousWarningSecond = remaining;
   }
-  if (duelSession) {
-    const outcome = getDuelOutcome(
-      [round.score, duelRound.score],
-      [round.endReason === 'missed', duelRound.endReason === 'missed'],
-      [round.phase === 'over', duelRound.phase === 'over'],
-    );
-    if (outcome.complete) {
-      duelWinner = outcome.winner;
-      screen = 'game-over';
-      screenElapsed = 0;
-      kioskIdleSeconds = 0;
-      audio.gameOver();
-    }
-  } else if (round.phase === 'over' && oldPhase !== 'over') {
-    screen = 'game-over';
-    screenElapsed = 0;
+}
+
+function transitionTo(next: AppScreen): void {
+  const previous = screen;
+  if (previous === next) return;
+  screen = next;
+  screenElapsed = 0;
+
+  if (enteredScreen(previous, next, 'play')) audio.countdown(0);
+  if (enteredScreen(previous, next, 'game-over')) {
     kioskIdleSeconds = 0;
     audio.gameOver();
-    if (isHighScore(round.score)) candidateEntry = { initials: 'AAA', score: round.score, timestamp: Date.now() };
+    if (duelSession) {
+      const outcome = getDuelOutcome(
+        [round.score, duelRound.score],
+        [round.endReason === 'missed', duelRound.endReason === 'missed'],
+        [round.phase === 'over', duelRound.phase === 'over'],
+      );
+      duelWinner = outcome.winner;
+    } else if (isHighScore(round.score)) {
+      candidateEntry = { initials: 'AAA', score: round.score, timestamp: Date.now() };
+    }
   }
+  if (enteredScreen(previous, next, 'initials')) {
+    initials = createInitialsState();
+    audio.highScore();
+  }
+  if (enteredScreen(previous, next, 'attract')) {
+    duelSession = false;
+    duelWinner = null;
+    candidateEntry = null;
+  }
+}
+
+function applyScreenFlow(action?: ScreenFlowAction): void {
+  const next = nextScreen({
+    screen,
+    roundPhase: round.phase,
+    duelSession,
+    duelPhases: [round.phase, duelRound.phase],
+    duelOut: [round.endReason === 'missed', duelRound.endReason === 'missed'],
+    screenElapsed,
+    hasCandidateEntry: candidateEntry !== null,
+    lockoutSeconds: SCREEN_INPUT_LOCKOUT_SECONDS,
+    ...(action ? { action } : {}),
+  });
+  transitionTo(next);
 }
 
 function update(dt: number): void {
@@ -503,22 +506,14 @@ function update(dt: number): void {
   debris = debris.map((piece) => ({ ...piece, age: piece.age + dt })).filter((piece) => piece.age < 1.4);
   if (screen === 'attract') updateDemo(dt);
   updateRoundState(dt);
-  if (screen === 'game-over' && duelSession && screenElapsed >= 6) returnToAttract();
-  else if (screen === 'game-over' && screenElapsed >= 8) enterResults();
-  if (screen === 'leaderboard' && screenElapsed >= 10) {
-    returnToAttract();
-  }
+  applyScreenFlow();
   if (kioskMode) {
     if (inputActivity) kioskIdleSeconds = 0;
     else if (screen === 'play') kioskIdleSeconds = 0;
     else kioskIdleSeconds += dt;
     inputActivity = false;
     if (shouldReturnToAttract(screen, kioskIdleSeconds)) {
-      screen = 'attract';
-      screenElapsed = 0;
-      duelSession = false;
-      duelWinner = null;
-      candidateEntry = null;
+      returnToAttract();
       kioskIdleSeconds = 0;
     }
   }

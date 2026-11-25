@@ -2,8 +2,7 @@ import type { RoundSnapshot } from '../core/round';
 import type { Block, DebrisPiece } from '../core/stack';
 import type { LeaderboardEntry } from '../core/leaderboard';
 import type { DuelWinner } from '../core/duel';
-
-export type AppScreen = 'attract' | 'countdown' | 'play' | 'game-over' | 'initials' | 'leaderboard';
+import type { AppScreen } from '../core/flow';
 
 export interface DebrisAnimation {
   piece: DebrisPiece;
