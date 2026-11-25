@@ -77,4 +77,23 @@ describe('leaderboard', () => {
     expect(leaderboard.get('one')).toEqual([]);
     expect(leaderboard.get('two')).toHaveLength(1);
   });
+
+  it('supports prototype-named event keys when reading, adding, and clearing', () => {
+    const storage = new MemoryStorage();
+    const leaderboard = new Leaderboard(storage);
+    const keys = ['constructor', '__proto__', 'toString'];
+    for (const [index, key] of keys.entries()) {
+      const entry = { initials: 'KEY', score: index + 1, timestamp: index + 1 };
+      expect(leaderboard.add(key, entry)).toBe(true);
+      expect(leaderboard.get(key)).toEqual([entry]);
+    }
+
+    const restored = deserializeLeaderboards(storage.getItem('skyline-stack-leaderboard'));
+    for (const key of keys) {
+      expect(Object.prototype.hasOwnProperty.call(restored, key)).toBe(true);
+      expect(restored[key]).toHaveLength(1);
+      leaderboard.clear(key);
+      expect(leaderboard.get(key)).toEqual([]);
+    }
+  });
 });

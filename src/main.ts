@@ -13,7 +13,12 @@ import {
 import { Leaderboard, sanitizeEventKey, type LeaderboardEntry, type StorageLike } from './core/leaderboard';
 import { getDuelOutcome, type DuelWinner } from './core/duel';
 import { enteredScreen, nextScreen, type AppScreen, type ScreenFlowAction } from './core/flow';
-import { shouldReturnToAttract } from './core/kiosk';
+import {
+  shouldRequestWakeLock,
+  shouldReturnToAttract,
+  WAKE_LOCK_RETRY_INTERVAL_MS,
+} from './core/kiosk';
+import { getKeyboardAction } from './core/keyboard-shortcuts';
 import { nextRandom } from './core/rng';
 import {
   GAME_OVER_INPUT_LOCKOUT_SECONDS,
@@ -86,6 +91,11 @@ const audio = new SynthAudio(params.get('mute') === '1');
 const renderer = new CanvasRenderer(canvas);
 const STEP = 1 / 120;
 
+interface WakeLockSentinelLike {
+  release(): Promise<void>;
+  addEventListener(type: 'release', listener: () => void, options?: { once?: boolean }): void;
+}
+
 let screen: AppScreen = 'attract';
 let round: RoundState = createRound(nextRoundSeed());
 let duelRound: RoundState = createRound(round.seed);
@@ -118,7 +128,10 @@ let operatorKeyStarted = 0;
 let operatorPointerStarted = 0;
 let kioskIdleSeconds = 0;
 let inputActivity = false;
-let wakeLock: { release: () => Promise<void> } | null = null;
+let wakeLock: WakeLockSentinelLike | null = null;
+let wakeLockRequestPending = false;
+let lastWakeLockAttemptAt = Number.NEGATIVE_INFINITY;
+let wakeLockRetryTimer: number | null = null;
 let kioskGestureStarted = false;
 let cloudNineAge = -1;
 
@@ -203,16 +216,52 @@ function noteActivity(): void {
   activateGesture();
 }
 
+function scheduleWakeLockRetry(): void {
+  if (!kioskMode || document.hidden || wakeLockRetryTimer !== null) return;
+  const remaining = WAKE_LOCK_RETRY_INTERVAL_MS - (performance.now() - lastWakeLockAttemptAt);
+  wakeLockRetryTimer = window.setTimeout(() => {
+    wakeLockRetryTimer = null;
+    void acquireWakeLock();
+  }, Math.max(0, remaining));
+}
+
 async function acquireWakeLock(): Promise<void> {
-  if (!kioskMode || wakeLock) return;
+  if (!kioskMode || document.hidden || wakeLock || wakeLockRequestPending) return;
   const wakeLockNavigator = navigator as Navigator & {
-    wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> };
+    wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelLike> };
   };
   if (!wakeLockNavigator.wakeLock) return;
+  const now = performance.now();
+  if (!shouldRequestWakeLock({
+    kioskMode,
+    visible: !document.hidden,
+    hasLock: wakeLock !== null,
+    pending: wakeLockRequestPending,
+    now,
+    lastAttemptAt: lastWakeLockAttemptAt,
+  })) {
+    scheduleWakeLockRetry();
+    return;
+  }
+
+  wakeLockRequestPending = true;
+  lastWakeLockAttemptAt = now;
   try {
-    wakeLock = await wakeLockNavigator.wakeLock.request('screen');
+    const sentinel = await wakeLockNavigator.wakeLock.request('screen');
+    if (document.hidden) {
+      void sentinel.release().catch(() => undefined);
+      return;
+    }
+    wakeLock = sentinel;
+    sentinel.addEventListener('release', () => {
+      if (wakeLock === sentinel) wakeLock = null;
+      if (!document.hidden) void acquireWakeLock();
+    }, { once: true });
   } catch {
     wakeLock = null;
+  } finally {
+    wakeLockRequestPending = false;
+    if (!wakeLock && !document.hidden) scheduleWakeLockRetry();
   }
 }
 
@@ -230,7 +279,13 @@ function openOperatorPanel(): void {
   operatorConfirmClear = false;
 }
 
-function activateOperator(index: number): void {
+function closeOperatorPanel(preserveKeyboardSuppression = false): void {
+  operatorOpen = false;
+  operatorConfirmClear = false;
+  if (!preserveKeyboardSuppression) ignoreNextKeyboardPress = false;
+}
+
+function activateOperator(index: number, preserveKeyboardSuppression = false): void {
   operatorSelected = index;
   if (index === 0) {
     if (operatorConfirmClear) {
@@ -247,21 +302,19 @@ function activateOperator(index: number): void {
     operatorConfirmClear = false;
     duelEnabled = !duelEnabled;
   } else {
-    operatorOpen = false;
-    operatorConfirmClear = false;
+    closeOperatorPanel(preserveKeyboardSuppression);
   }
 }
 
 function handleOperatorKey(key: string): void {
   const normalized = key.toLowerCase();
   if (normalized === 'escape') {
-    operatorOpen = false;
-    operatorConfirmClear = false;
+    closeOperatorPanel();
   } else if (normalized === 'arrowup' || normalized === 'arrowdown') {
     const direction = normalized === 'arrowup' ? -1 : 1;
     operatorSelected = (operatorSelected + direction + 4) % 4;
   } else if (normalized === 'enter' || normalized === ' ' || normalized === 'space') {
-    activateOperator(operatorSelected);
+    activateOperator(operatorSelected, true);
   } else if (/^[1-4]$/.test(normalized)) {
     activateOperator(Number(normalized) - 1);
   }
@@ -350,25 +403,26 @@ function onInput(event: PressEvent): void {
 const INITIALS_BUTTON_KEYS = new Set([' ', 'space', 'spacebar', 'enter', 'arrowup']);
 
 function onKey(key: string): void {
-  const normalized = key.toLowerCase();
-  if (operatorOpen) {
+  const action = getKeyboardAction(screen, key, operatorOpen);
+  if (action === 'operator-control') {
+    const normalized = key.toLowerCase();
     ignoreNextKeyboardPress = [' ', 'space', 'spacebar', 'enter', 'arrowup', 'arrowdown'].includes(normalized);
     handleOperatorKey(key);
     return;
   }
-  if (normalized === 'o') {
+  if (action === 'operator-hold') {
     operatorKeyStarted = performance.now();
     return;
   }
-  if (normalized === 'd' && screen === 'attract') {
+  if (action === 'toggle-duel') {
     duelEnabled = !duelEnabled;
     return;
   }
-  if (key.toLowerCase() === 'm') {
+  if (action === 'toggle-mute') {
     audio.toggleMute();
     return;
   }
-  if (screen === 'initials') {
+  if (action === 'initials-entry') {
     const normalized = key.toLowerCase();
     if (INITIALS_BUTTON_KEYS.has(normalized)) {
       initialsGesture = { started: performance.now(), player: 0, key: normalized };
@@ -685,9 +739,14 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     lastFrame = 0;
     accumulator = 0;
+    if (wakeLockRetryTimer !== null) {
+      window.clearTimeout(wakeLockRetryTimer);
+      wakeLockRetryTimer = null;
+    }
     if (wakeLock) {
-      void wakeLock.release().catch(() => undefined);
+      const releasedWakeLock = wakeLock;
       wakeLock = null;
+      void releasedWakeLock.release().catch(() => undefined);
     }
   } else if (kioskMode) {
     void acquireWakeLock();

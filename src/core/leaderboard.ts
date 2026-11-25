@@ -38,6 +38,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function emptyLeaderboards(): EventLeaderboards {
+  return Object.create(null) as EventLeaderboards;
+}
+
 function parseEntry(value: unknown): LeaderboardEntry | null {
   if (!isRecord(value)) return null;
   const { initials, score, timestamp } = value;
@@ -52,11 +56,11 @@ export function serializeLeaderboards(leaderboards: EventLeaderboards): string {
 }
 
 export function deserializeLeaderboards(serialized: string | null): EventLeaderboards {
-  if (!serialized) return {};
+  if (!serialized) return emptyLeaderboards();
   try {
     const parsed: unknown = JSON.parse(serialized);
-    if (!isRecord(parsed)) return {};
-    const leaderboards: EventLeaderboards = {};
+    if (!isRecord(parsed)) return emptyLeaderboards();
+    const leaderboards = emptyLeaderboards();
     for (const [eventKey, value] of Object.entries(parsed)) {
       if (!Array.isArray(value)) continue;
       const entries = value.map(parseEntry).filter((entry): entry is LeaderboardEntry => entry !== null);
@@ -64,7 +68,7 @@ export function deserializeLeaderboards(serialized: string | null): EventLeaderb
     }
     return leaderboards;
   } catch {
-    return {};
+    return emptyLeaderboards();
   }
 }
 
